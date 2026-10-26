@@ -11,14 +11,22 @@ function escapeRegex(text) {
 }
 // /api/item call
 router.get('/', async (req, res) => {
-  const pagination = req.query.pagination ? parseInt(req.query.pagination) : 10;
-  const page = req.query.page ? parseInt(req.query.page) : 1;
-  const regex = new RegExp(escapeRegex(req.query.skuNumber), 'gi');
   try {
-    const items = await Item.find({ skuNumber: regex })
+    const requestedLimit = Number.parseInt(req.query.pagination, 10);
+    const requestedPage = Number.parseInt(req.query.page, 10);
+    const pagination = Number.isInteger(requestedLimit)
+      ? Math.min(Math.max(requestedLimit, 1), 100)
+      : 10;
+    const page = Number.isInteger(requestedPage) ? Math.max(requestedPage, 1) : 1;
+    const filter = {};
+    if (req.query.skuNumber) {
+      filter.skuNumber = new RegExp(escapeRegex(String(req.query.skuNumber)), 'i');
+    }
+
+    const items = await Item.find(filter)
       .skip(pagination * page - pagination)
       .limit(pagination);
-    const count = await Item.countDocuments({ skuNumber: regex });
+    const count = await Item.countDocuments(filter);
     res.json({
       success: true,
       query: req.query,
@@ -27,7 +35,7 @@ router.get('/', async (req, res) => {
       pages: Math.ceil(count / pagination)
     });
   } catch (err) {
-    console.error(err);
+    console.error(err.message);
     res.json({
       success: false,
       err: err

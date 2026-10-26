@@ -36,7 +36,7 @@ router.post('/', (req, res) => {
       d: 'mm'
     });
 
-    clearance = ['not_certified'];
+    const clearance = ['not_certified'];
 
     const newUser = new User({
       name,
@@ -53,12 +53,18 @@ router.post('/', (req, res) => {
         if (err) throw err;
         newUser.password = hash;
         newUser.save().then(user => {
-          jwt.sign({ user: user }, process.env.SECRET_OR_KEY, (err, token) => {
+          jwt.sign({ id: user._id }, process.env.SECRET_OR_KEY, (err, token) => {
             res.json({
               success: true,
               message: 'new user created',
               token,
-              user
+              user: {
+                id: user._id,
+                name: user.name,
+                email: user.email,
+                avatar: user.avatar,
+                clearance: user.clearance
+              }
             });
           });
         });

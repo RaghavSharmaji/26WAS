@@ -48,7 +48,13 @@ router.post('/', (req, res) => {
             success: true,
             message: 'User logged in',
             token,
-            user
+            user: {
+              id: user._id,
+              name: user.name,
+              email: user.email,
+              avatar: user.avatar,
+              clearance: user.clearance
+            }
           });
         }
       );
@@ -64,7 +70,13 @@ router.get('/user', auth, async (req, res) => {
     res.json({
       success: true,
       message: 'User has been authenticated',
-      user: req.user
+      user: {
+        id: req.user._id,
+        name: req.user.name,
+        email: req.user.email,
+        avatar: req.user.avatar,
+        clearance: req.user.clearance
+      }
     });
   } catch (error) {
     res.json({ success: false, error });
@@ -77,7 +89,7 @@ router.get('/user', auth, async (req, res) => {
 router.post('/logout', auth, async (req, res) => {
   try {
     req.user.status = 'off';
-    req.user.save();
+    await req.user.save();
     res.json({
       success: true,
       message: 'User has been  logout'

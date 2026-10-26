@@ -1,223 +1,88 @@
-![Logo](https://res.cloudinary.com/dujqdfwzi/image/upload/v1567925665/wms/1f087f06-5b76-468d-8d3b-57c236755776_200x200.png)
-#  Warehouse Management System
-A  warehouse management system built with MongoDB, Express, Node.js and ReactJS.
+# Warehouse Management System — Phase 1 Backend
 
-A simplified Next.js version using SQLite is included in the `next-app` folder for local development.
+A MongoDB and Express backend for warehouse operations. This submission contains **Phase 1 only**; frontend development and full integration remain future work.
 
+## Development phases
 
-* [Getting started](#getting-started)
-  * [Prerequisites](#prerequisites)
-  * [Installation](#installation)
-* [About project](#about-project)
-  * [Problem](#problem)
-  * [Solution](#solution)
-* [Planning](#planning)
-  * [Audience](#audience)
-  * [User stories](#user-stories)
-  * [Entity Relationship Diagram](#entity-relationship-diagram)
-    * [Version One](#version-one)
-    * [Version Two](#version-two)
-  * [Trello](#trello)
-* [Design](#design)
-  * [Wireframes](#wireframes)
-  * [Prototype](#prototype)
-* [Development](#development)
-  * [Requirements](#requirements)
-  * [Technologies](#technologies)
-* [Challenges and final thoughts](#challenges-and-final-thoughts)
-* [Team](#team)
+1. **Phase 1 (implemented):** Express API, MongoDB persistence, authentication, inventory, receiving, locations, orders, tickets, and pallet operations.
+2. **Phase 2 (future):** React interface, login and dashboard pages, and management screens.
+3. **Phase 3 (future):** End-to-end integration, expanded tests, security/performance improvements, and deployment preparation.
 
-## Getting started
-These instructions will get you a copy of the project up and running on your local machine for development purposes.
-### Prerequisites
-#### Back-end:
-- MongoDB
-- Express
-- Node.js
+## Technology and layout
 
-```json
-  "dependencies": {
-    "bcryptjs": "^2.4.3",
-    "cors": "^2.8.5",
-    "cross-env": "^5.2.0",
-    "date-fns": "^2.0.1",
-    "dotenv": "^7.0.0",
-    "express": "^4.16.4",
-    "faker": "^4.1.0",
-    "gravatar": "^1.8.0",
-    "jsonwebtoken": "^8.5.1",
-    "lodash": "^4.17.15",
-    "mongoose": "^5.5.0",
-    "mui-datatables": "^2.8.1",
-    "passport": "^0.4.0",
-    "passport-jwt": "^4.0.0",
-    "passport-local": "^1.0.0",
-    "reactstrap": "^8.0.1",
-    "styled-components": "^4.3.2"
-  },
-  "devDependencies": {
-    "eslint": "^5.3.0",
-    "eslint-config-airbnb": "^17.1.1",
-    "eslint-config-node": "^4.0.0",
-    "eslint-config-prettier": "^6.0.0",
-    "eslint-plugin-import": "^2.18.0",
-    "eslint-plugin-jsx-a11y": "^6.2.3",
-    "eslint-plugin-node": "^9.1.0",
-    "eslint-plugin-prettier": "^3.1.0",
-    "eslint-plugin-react": "^7.14.2",
-    "prettier": "^1.18.2",
-    "concurrently": "^4.1.0"
-  }
-```
-#### Front-end:
-- React.js
-```json
-  "dependencies": {
-    "@material-ui/core": "^4.3.2",
-    "@material-ui/icons": "^4.2.1",
-    "axios": "^0.19.0",
-    "react": "^16.9.0",
-    "react-dom": "^16.9.0",
-    "react-redux": "^7.1.0",
-    "react-router-dom": "^5.0.1",
-    "react-scripts": "3.1.1",
-    "redux": "^4.0.4",
-    "redux-devtools-extension": "^2.13.8",
-    "redux-thunk": "^2.3.0"
-  },
-    "devDependencies": {
-    "autoprefixer-stylus": "^0.14.0",
-    "concurrently": "^3.5.1",
-    "stylus": "^0.54.5"
-  }
-```
-### Installation
-Clone the repo
-```
-git clone https://github.com/kamekazz/warehouse-management-system.git
+- Node.js, Express 4, Mongoose 5, MongoDB
+- JWT authentication and bcrypt password hashing
+- `server.js` starts the API; `routes/` implements endpoints; `model/` defines persisted entities; `middleware/` handles JWT authentication; `validation/` and `helper/` hold shared validation/utilities.
+
+```text
+server.js
+model/            User, Item, Location, Pallets, Order, Ticket, Product
+routes/           auth, user, item, location, pallet, receiving, order, ticket, picker, web scraping
+middleware/       JWT authentication
+validation/       registration and login validation
+helper/           item parsing helper
+ test/            helper unit test
 ```
 
-Change to the `wms` folder and install development and production dependencies.
+## Setup
 
-```
-cd wms
+Requirements: Node.js and a running MongoDB instance. Configure environment:
+
+```powershell
+Copy-Item .env.example .env
+# Edit .env with your MongoDB URI and a strong random SECRET_OR_KEY
 npm install
+npm start
 ```
 
-Change to the `client` folder and install development and production dependencies.
+The server connects to MongoDB before listening. Default port is `5000`. `npm run dev` runs nodemon. `npm test` runs the included helper test.
+
+## API
+
+All resource routes are under `/api` except the legacy item lookup route `/webs/item`.
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET | `/api/health` | API and database status |
+| POST | `/api/user` | Register a user |
+| POST | `/api/auth` | Login and receive JWT |
+| GET | `/api/auth/user` | Authenticated user profile |
+| POST | `/api/auth/logout` | Mark authenticated user logged out |
+| GET, POST | `/api/item` | List or create items |
+| GET | `/api/item/:skuNumber` | Find item by SKU |
+| POST | `/api/item/update`, `/api/item/delete` | Update or delete item |
+| GET, POST | `/api/location` | List or create locations |
+| GET, POST, DELETE | `/api/location/available/all`, `/api/location/create`, `/api/location/delete/:locationFullName` | Location operations |
+| GET, POST, DELETE | `/api/pallet` | List, create, update, or delete pallets (update uses POST `/update`) |
+| POST | `/api/receiving/*` | Receiving and put-away operations |
+| GET, POST | `/api/order` | List and create orders; submit via POST `/submit` |
+| GET, POST, DELETE | `/api/ticket` | Ticket operations |
+| POST | `/api/picker/*` | Picking operations |
+| POST | `/webs/item` | Legacy external catalog lookup (requires network and Puppeteer/Chromium) |
+
+### Terminal examples
+
+```sh
+curl http://localhost:5000/api/health
+curl -X POST http://localhost:5000/api/user -H "Content-Type: application/json" -d '{"name":"Warehouse Admin","email":"admin@example.com","password":"change-this-password"}'
+curl -X POST http://localhost:5000/api/auth -H "Content-Type: application/json" -d '{"email":"admin@example.com","password":"change-this-password"}'
+curl -X POST http://localhost:5000/api/item/create -H "Content-Type: application/json" -d '{"name":"Sample item","size":1,"skuNumber":"SKU-001","department":"General"}'
+curl http://localhost:5000/api/item
 ```
-cd client
-npm install
-```
 
-# Next.js local demo
-cd ..
-cd next-app
-npm install
-# Start development
-cd ..
-npm run next-dev
+For protected routes send `-H "Authorization: Bearer <token>"`. A healthy server returns `200` with `{"success":true,"status":"ok"}`. If MongoDB is unavailable, health returns `503`; unknown routes return `404`. Request bodies should match the model fields. Existing routes are legacy and some use POST for update/delete actions.
 
+## Data model overview
 
-You will need to set up MongoDB. See [MongoDB](https://docs.mongodb.com/) for instructions
-and setup a .env file and add.
-MONGODB_URI=YOUR MONGODB DATA
-```
+Users store unique email and a bcrypt hash; items have unique `skuNumber`; locations have unique `fullName`; pallets reference items and carry quantities/status/location; orders and tickets track fulfillment; products represent ticket pick records. These schemas are in `model/`. MongoDB persists records in the configured database; inspect them with `mongosh` or MongoDB Compass.
 
-For jwtToken  you will need to add  SECRET_OR_KEY=pppppp and PORT=5000
+## Security and validation
 
-Go to the `wms` folder and start the server.
-```
-cd wms
-npm run dev
+- `.env` is ignored by Git; `.env.example` contains variable names and placeholders only.
+- JWT signing uses `SECRET_OR_KEY`; passwords are hashed during registration.
+- API input validation exists for authentication and Mongoose schema fields.
+- The existing authorization and operation routes are legacy implementations and should be reviewed before production use.
 
+## Verification and limitations
 
-
-
-Open in your browser and navigate to http://localhost:3000. You access the back-end on http://localhost:5000.
-
-## About project
-You are to design, build, deploy, and present an application built for a real world customer.
-
-Find a business or organisation nearby to Coder Academy to build an application for.
-
-Meet with the business owner or organisation manager to find out what challenges they face. Find a problem that you can solve with an application and present your ideas to the client.
-
-### Problem
-
-### Solution
-
-## Planning
-
-
-
-Using Trello we began adding all tasks and delegating work between each member of the team.
-
-
-
-![alt text](https://res.cloudinary.com/dujqdfwzi/image/upload/v1567927026/wms/trilo.png)
-## Trello 
-[Trello Board](https://trello.com/b/174yAXvn/ez-wms)
-
-
-
-### Audience
-
-
-### User Stories
-**Note** The user stories which apply to lower-level users (for example, a basic user) also apply to high-level users.
-
-#### All staff
-
-
-
-#### Product Owner
-
-
-
-#### Admin Users
-
-
-
-#### Business Unit Representative
-
-
-
-### Requirements
-[x] Backend - Node.js
-[x] Frontend - ReactJS
-[x] MongoDB and Mongoose
-[x] Authentication (Google OAuth)
-[x] Authorisation
-[x] Filtering capability
-[x] User interface
-[x] Deploye back-end, front-end and host database
-[x] README
-
-### Trello
-![Trello | warehouse management System](https://res.cloudinary.com/dujqdfwzi/image/upload/v1567927026/wms/trilo.png)
-
-### Technologies
-- Node.js
-- Express
-- MongoDB
-- Mongoose
-- React.js
-- Moment.js
-- MomentTimezone.js
-- Stylus
-## Challenges and final thoughts
-
-### Challenges
-
-
-## Future developments
-- Weekly and monthly views
-- Searching
-- User permissions
-- CMS
-- Google Calendar
-
-## Team
-- [kamekazz](https://github.com/kamekazz)
-
+The API has a database-aware health endpoint; a live check connected to the default local MongoDB database and returned `200`. The existing automated test covers the item parsing helper. The project does not include a `.env` file, so set `MONGODB_URI` and `SECRET_OR_KEY` locally before startup. Inventory transaction atomicity, a formal role policy, and comprehensive route integration tests are not present yet. The legacy scraper depends on an external catalog and local Chromium support.
