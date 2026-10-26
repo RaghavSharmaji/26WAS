@@ -21,8 +21,8 @@ const ProductSchema = new Schema({
   ticketId: { type: Schema.Types.ObjectId, ref: 'tickets' },
   date: {
     type: Date,
-    default: Date.now()
+    default: Date.now
   }
 });
 
-module.exports = Product = mongoose.model('products', ProductSchema);
+module.exports = mongoose.model('products', ProductSchema);

@@ -1,31 +1,39 @@
 const jwt = require('jsonwebtoken');
 const User = require('../model/User');
 
-// eslint-disable-next-line consistent-return
-module.exports = async function(req, res, next) {
-  // Get token from header
-  const authorization = req.header('authorization') || '';
-  const token = authorization.startsWith('Bearer ')
-    ? authorization.slice(7)
-    : req.header('x-auth-token');
+function unauthorized(res, message) {
+  return res.status(401).json({ success: false, message });
+}
 
-  // Check if not token
-  if (!token) {
-    return res.status(401).json({
-      success: false,
-      message: 'No token, authorization denied'
-    });
-  }
-  // Verify token
+async function requireAuth(req, res, next) {
+  const authorization = req.get('authorization') || '';
+  const token = authorization.startsWith('Bearer ')
+    ? authorization.slice(7).trim()
+    : req.get('x-auth-token');
+  if (!token) return unauthorized(res, 'Authentication required');
+
   try {
-    const { id } = jwt.verify(token, process.env.SECRET_OR_KEY);
-    const user = await User.findOne({ _id: id });
-    if (!user)
-      return res.status(401).json({ success: false, error: 'user token not valid' });
-    user.status = 'on';
+    const payload = jwt.verify(token, process.env.SECRET_OR_KEY);
+    const user = await User.findById(payload.id);
+    if (!user) return unauthorized(res, 'Invalid authentication token');
     req.user = user;
-    next();
+    req.auth = { id: String(user._id), role: user.role || 'staff' };
+    return next();
   } catch (err) {
-    res.status(401).json({ success: false, message: 'Token is not valid' });
+    return unauthorized(res, 'Invalid authentication token');
   }
-};
+}
+
+function requireRole(...roles) {
+  return (req, res, next) => {
+    if (!req.auth) return unauthorized(res, 'Authentication required');
+    if (!roles.includes(req.auth.role)) {
+      return res.status(403).json({ success: false, message: 'Insufficient permissions' });
+    }
+    return next();
+  };
+}
+
+module.exports = requireAuth;
+module.exports.requireAuth = requireAuth;
+module.exports.requireRole = requireRole;

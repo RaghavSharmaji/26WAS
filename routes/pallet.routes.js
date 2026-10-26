@@ -131,6 +131,13 @@ router.post('/create', async (req, res) => {
         message: `item not fond (${skuNumber})`
       });
     } else {
+      const quantity = Number(newPallet.cont);
+      if (!Number.isInteger(quantity) || quantity <= 0) {
+        return res.status(400).json({ success: false, message: 'cont must be a positive whole number' });
+      }
+      if (!req.body.reason || !String(req.body.reason).trim()) {
+        return res.status(400).json({ success: false, message: 'reason is required' });
+      }
       const locations = await Location.find({
         skuNumber: skuNumber
       });
@@ -138,6 +145,11 @@ router.post('/create', async (req, res) => {
       newPallet.size = itemFond.size * newPallet.cont;
       newPallet.ounce = itemFond.ounce * newPallet.cont;
       newPallet.status = 'receiving';
+      newPallet.contAvailable = quantity;
+      newPallet.movementLog.push({
+        type: 'stock-in', quantity, delta: quantity, stockBefore: 0, stockAfter: quantity,
+        reason: String(req.body.reason).trim(), responsibleUser: req.auth.id
+      });
       await newPallet.save();
       res.json({
         success: true,
@@ -260,6 +272,9 @@ router.delete('/delete', async (req, res) => {
   try {
     const pallet = await Pallet.findOne({ _id: id });
     if (pallet) {
+      if ((pallet.contAvailable || 0) > 0 || pallet.movementLog.length > 0) {
+        return res.status(409).json({ success: false, message: 'Pallet has stock or movement history and cannot be deleted' });
+      }
       const locationFond = await Location.findOne({
         palletId: id
       });

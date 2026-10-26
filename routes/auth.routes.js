@@ -1,102 +1,74 @@
-/* eslint-disable consistent-return */
-/* eslint-disable no-underscore-dangle */
 const express = require('express');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const gravatar = require('gravatar');
+const validator = require('validator');
+const User = require('../model/User');
+const auth = require('../middleware/auth');
+const asyncHandler = require('../middleware/asyncHandler');
 
 const router = express.Router();
-const bcrypt = require('bcryptjs');
-// User Model
-const jwt = require('jsonwebtoken');
-const User = require('../model/User');
 
-const auth = require('../middleware/auth');
+function publicUser(user) {
+  return {
+    id: user._id,
+    name: user.name,
+    email: user.email,
+    avatar: user.avatar,
+    clearance: user.clearance,
+    role: user.role || 'staff'
+  };
+}
 
-// @route   POST api/auth
-// @desc    Auth user
-// @access  Public
-// eslint-disable-next-line consistent-return
-router.post('/', (req, res) => {
-  const { email, password } = req.body;
-  //  Simple validation
-  if (!email || !password) {
-    return res.json({
-      success: false,
-      error: 'Please enter all fields'
-    });
+function issueToken(user) {
+  return jwt.sign({ id: user._id }, process.env.SECRET_OR_KEY, { expiresIn: '7d' });
+}
+
+async function register(req, res) {
+  const { name, email, password } = req.body || {};
+  if (typeof name !== 'string' || name.trim().length < 2 || name.trim().length > 80) {
+    return res.status(400).json({ success: false, message: 'Name must be 2 to 80 characters' });
+  }
+  if (typeof email !== 'string' || !validator.isEmail(email)) {
+    return res.status(400).json({ success: false, message: 'A valid email is required' });
+  }
+  if (typeof password !== 'string' || password.length < 8 || password.length > 128) {
+    return res.status(400).json({ success: false, message: 'Password must be 8 to 128 characters' });
   }
 
-  // Check for existing user
-  User.findOne({ email }).then(user => {
-    if (!user)
-      return res.json({
-        success: false,
-        error: 'User Does not exist'
-      });
-
-    // Validate password
-    bcrypt.compare(password, user.password).then(isMatch => {
-      if (!isMatch)
-        return res.json({
-          success: false,
-          error: 'Invalid credentials'
-        });
-      jwt.sign(
-        { id: user._id },
-        process.env.SECRET_OR_KEY,
-        { expiresIn: '7d' },
-        (err, token) => {
-          res.json({
-            success: true,
-            message: 'User logged in',
-            token,
-            user: {
-              id: user._id,
-              name: user.name,
-              email: user.email,
-              avatar: user.avatar,
-              clearance: user.clearance
-            }
-          });
-        }
-      );
-    });
+  const normalizedEmail = email.trim().toLowerCase();
+  const user = await User.create({
+    name: name.trim(),
+    email: normalizedEmail,
+    password: await bcrypt.hash(password, 12),
+    avatar: gravatar.url(normalizedEmail, { s: '200', r: 'r', d: 'mm' }),
+    clearance: ['staff'],
+    role: 'staff',
+    status: 'on'
   });
-});
+  return res.status(201).json({ success: true, token: issueToken(user), user: publicUser(user) });
+}
 
-// @route   GET api/auth/user
-// @desc    Get user data
-// @access  Private
-router.get('/user', auth, async (req, res) => {
-  try {
-    res.json({
-      success: true,
-      message: 'User has been authenticated',
-      user: {
-        id: req.user._id,
-        name: req.user.name,
-        email: req.user.email,
-        avatar: req.user.avatar,
-        clearance: req.user.clearance
-      }
-    });
-  } catch (error) {
-    res.json({ success: false, error });
+async function login(req, res) {
+  const { email, password } = req.body || {};
+  if (typeof email !== 'string' || typeof password !== 'string' || !email.trim() || !password) {
+    return res.status(400).json({ success: false, message: 'Email and password are required' });
   }
-});
+  const user = await User.findOne({ email: email.trim().toLowerCase() }).select('+password');
+  if (!user || !(await bcrypt.compare(password, user.password))) {
+    return res.status(401).json({ success: false, message: 'Invalid email or password' });
+  }
+  return res.status(200).json({ success: true, token: issueToken(user), user: publicUser(user) });
+}
 
-// @route   GET api/auth/logout
-// @desc    logout
-// @access  Private
-router.post('/logout', auth, async (req, res) => {
-  try {
-    req.user.status = 'off';
-    await req.user.save();
-    res.json({
-      success: true,
-      message: 'User has been  logout'
-    });
-  } catch (error) {
-    res.json({ success: false, error });
-  }
-});
+router.post('/register', asyncHandler(register));
+router.post(['/login', '/'], asyncHandler(login));
+router.get('/user', auth, asyncHandler(async (req, res) => {
+  res.json({ success: true, user: publicUser(req.user) });
+}));
+router.post('/logout', auth, asyncHandler(async (req, res) => {
+  res.json({ success: true, message: 'JWT logout is complete when the client discards the token' });
+}));
 
 module.exports = router;
+module.exports.register = register;

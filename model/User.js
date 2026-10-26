@@ -9,11 +9,14 @@ const UserSchema = new Schema({
   email: {
     type: String,
     required: true,
-    unique: true
+    unique: true,
+    trim: true,
+    lowercase: true
   },
   password: {
     type: String,
-    required: true
+    required: true,
+    select: false
   },
   avatar: {
     type: String
@@ -23,6 +26,7 @@ const UserSchema = new Schema({
       type: String
     }
   ],
+  role: { type: String, enum: ['admin', 'staff'], default: 'staff', index: true },
   status: { type: String },
   date: {
     type: Date,
@@ -30,4 +34,11 @@ const UserSchema = new Schema({
   }
 });
 
-module.exports = User = mongoose.model('users', UserSchema);
+UserSchema.set('toJSON', {
+  transform(doc, result) {
+    delete result.password;
+    return result;
+  }
+});
+
+module.exports = mongoose.model('users', UserSchema);

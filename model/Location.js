@@ -13,17 +13,17 @@ const LocationSchema = new Schema({
   row: {
     type: Number,
     required: true,
-    trim: true
+    min: 0
   },
   location: {
     type: Number,
     required: true,
-    trim: true
+    min: 0
   },
   level: {
     type: Number,
     required: true,
-    trim: true
+    min: 0
   },
   department: {
     type: String
@@ -32,6 +32,12 @@ const LocationSchema = new Schema({
     type: String,
     required: true,
     unique: true
+  },
+  warehouse: {
+    type: Schema.Types.ObjectId,
+    ref: 'warehouses',
+    default: null,
+    index: true
   },
   skuNumber: {
     type: String,
@@ -53,8 +59,8 @@ const LocationSchema = new Schema({
   activate: [{ type: Number }],
   date: {
     type: Date,
-    default: Date.now()
+    default: Date.now
   }
 });
 
-module.exports = Location = mongoose.model('locations', LocationSchema);
+module.exports = mongoose.model('locations', LocationSchema);

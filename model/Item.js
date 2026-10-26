@@ -12,7 +12,8 @@ const ItemSchema = new Schema({
   },
   size: {
     type: Number,
-    required: true
+    required: true,
+    min: 0
   },
   skuNumber: {
     type: String,
@@ -27,12 +28,29 @@ const ItemSchema = new Schema({
     type: String
   },
   ounce: {
-    type: Number
+    type: Number,
+    min: 0
   },
+  reorderLevel: {
+    type: Number,
+    default: 0,
+    min: 0
+  },
+  category: {
+    type: Schema.Types.ObjectId,
+    ref: 'categories',
+    default: null
+  },
+  suppliers: [
+    {
+      type: Schema.Types.ObjectId,
+      ref: 'suppliers'
+    }
+  ],
   date: {
     type: Date,
-    default: Date.now()
+    default: Date.now
   }
 });
 
-module.exports = Item = mongoose.model('items', ItemSchema);
+module.exports = mongoose.model('items', ItemSchema);

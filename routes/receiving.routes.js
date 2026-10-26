@@ -45,6 +45,13 @@ router.post('/create', async (req, res) => {
   const { skuNumber, cont } = newPallet;
   newPallet.contAvailable = cont;
   try {
+    const quantity = Number(cont);
+    if (!Number.isInteger(quantity) || quantity <= 0) {
+      return res.status(400).json({ success: false, message: 'cont must be a positive whole number' });
+    }
+    if (!req.body.reason || !String(req.body.reason).trim()) {
+      return res.status(400).json({ success: false, message: 'reason is required' });
+    }
     const itemFond = await Item.findOne({
       skuNumber: skuNumber
     });
@@ -63,6 +70,10 @@ router.post('/create', async (req, res) => {
       newPallet.ounce = itemFond.ounce * newPallet.cont;
       newPallet.department = itemFond.department;
       newPallet.status = 'received';
+      newPallet.movementLog.push({
+        type: 'stock-in', quantity, delta: quantity, stockBefore: 0, stockAfter: quantity,
+        reason: String(req.body.reason).trim(), responsibleUser: req.auth.id
+      });
       await newPallet.save();
       res.json({
         success: true,

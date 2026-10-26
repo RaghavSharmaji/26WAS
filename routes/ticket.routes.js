@@ -4,6 +4,7 @@ const Pallet = require('../model/Pallets');
 const Orders = require('../model/Order');
 const Ticket = require('../model/Ticket');
 const Product = require('../model/Product');
+const inventoryService = require('../services/inventoryService');
 
 router.get('/', async (req, res) => {
   try {
@@ -30,66 +31,44 @@ router.post('/create', async (req, res) => {
   let products = [];
   let order = await Orders.findOne({ _id: order_id, status: 'create' });
   if (!order) return res.json({ success: false, message: 'Order not fond' });
-  for (let i = 0; i < order['items'].length; i++) {
-    let cont_sum = 0;
-    let total_cont = await Pallet.aggregate([
-      {
-        $match: {
-          $and: [
-            {
-              skuNumber: order['items'][i]['skuNumber'],
-              location: { $exists: true }
-            }
-          ]
-        }
-      },
-      { $group: { _id: null, totalValue: { $sum: '$contAvailable' } } }
+  for (const line of order.items) {
+    const requested = Number(line.cont);
+    const totals = await Pallet.aggregate([
+      { $match: { skuNumber: line.skuNumber, location: { $exists: true } } },
+      { $group: { _id: null, totalValue: { $sum: { $ifNull: ['$contAvailable', '$cont'] } } } }
     ]);
-
-    if (typeof total_cont[0] !== 'undefined') {
-      cont_sum = total_cont[0]['totalValue'];
+    const available = totals.length ? totals[0].totalValue : 0;
+    if (!Number.isInteger(requested) || requested <= 0 || requested > available) {
+      not_found.push(line);
+      continue;
     }
 
-    if (order['items'][i]['cont'] > cont_sum) {
-      not_found.push(order['items'][i]);
-    } else {
-      let item_qty = order['items'][i]['cont'];
-      let is_updated = 0;
-      let palletss = await Pallet.find({
-        skuNumber: order['items'][i]['skuNumber'],
-        location: { $exists: true }
+    let remaining = requested;
+    const pallets = await Pallet.find({ skuNumber: line.skuNumber, location: { $exists: true } }).sort({ date: 1 });
+    for (const pallet of pallets) {
+      if (remaining <= 0) break;
+      const palletAvailable = Number(pallet.contAvailable == null ? pallet.cont || 0 : pallet.contAvailable);
+      const toPick = Math.min(remaining, palletAvailable);
+      if (toPick <= 0) continue;
+      await inventoryService.changePalletStock({
+        palletId: pallet._id,
+        type: 'stock-out',
+        quantity: toPick,
+        reason: `Order ${order._id} fulfillment`,
+        userId: req.auth.id
       });
-      for (let pallet of palletss) {
-        if (item_qty <= pallet['contAvailable'] && is_updated == 0) {
-          let toBePick = item_qty;
-          pallet['contAvailable'] = pallet['contAvailable'] - item_qty;
-          let product = new Product({
-            location: pallet['location'],
-            sku_number: pallet['skuNumber'],
-            cont: toBePick,
-            cont_to_be_pick: toBePick,
-            ticketId: newTicket._id
-          });
-          products.push(product._id);
-          await product.save();
-          is_updated = 1;
-        } else if (item_qty > pallet['contAvailable']) {
-          let toBePick = pallet['contAvailable'];
-          item_qty = item_qty - pallet['contAvailable'];
-          pallet['contAvailable'] = 0;
-          let product = new Product({
-            location: pallet['location'],
-            sku_number: pallet['skuNumber'],
-            cont: toBePick,
-            cont_to_be_pick: toBePick,
-            ticketId: newTicket._id
-          });
-          products.push(product._id);
-          await product.save();
-        }
-        await pallet.save();
-      }
+      const product = new Product({
+        location: pallet.location,
+        sku_number: pallet.skuNumber,
+        cont: toPick,
+        cont_to_be_pick: toPick,
+        ticketId: newTicket._id
+      });
+      products.push(product._id);
+      await product.save();
+      remaining -= toPick;
     }
+    if (remaining > 0) not_found.push({ skuNumber: line.skuNumber, cont: remaining });
   }
 
   try {
