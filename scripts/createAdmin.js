@@ -1,6 +1,7 @@
 require('dotenv').config();
 const bcrypt = require('bcryptjs');
 const mongoose = require('mongoose');
+mongoose.set('strictQuery', false);
 const User = require('../model/User');
 
 async function createOrPromoteAdmin() {
@@ -13,10 +14,13 @@ async function createOrPromoteAdmin() {
   }
   if (WMS_ADMIN_PASSWORD.length < 12) throw new Error('WMS_ADMIN_PASSWORD must be at least 12 characters');
 
-  await mongoose.connect(MONGODB_URI, { useNewUrlParser: true, useUnifiedTopology: true });
+  await mongoose.connect(MONGODB_URI);
   const email = WMS_ADMIN_EMAIL.trim().toLowerCase();
-  const user = await User.findOne({ email }).select('_id').lean();
+  const user = await User.findOne({ email }).select('_id role').lean();
   if (user) {
+    if (user.role === 'superadmin') {
+      throw new Error('This account is the Super Admin and cannot be changed by the legacy admin bootstrap script.');
+    }
     await User.updateOne({ _id: user._id }, { $set: { role: 'admin', clearance: ['admin'] } });
     console.log(`Promoted existing account ${email} to admin`);
     return;

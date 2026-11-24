@@ -10,12 +10,12 @@ import {
 
 import "./Settings.css";
 
-function Settings() {
-  const [profile, setProfile] = useState({
-    name: "Warehouse Admin",
-    email: "admin@wareflow.com",
-    role: "Administrator",
-  });
+function Settings({ user }) {
+  const [profile, setProfile] = useState(() => ({
+    name: user?.name || "",
+    email: user?.email || "",
+    role: user?.role === "admin" ? "Administrator" : "Staff",
+  }));
 
   const [warehouse, setWarehouse] = useState({
     name: "WareFlow Main Warehouse",
@@ -55,9 +55,9 @@ function Settings() {
 
   const handleReset = () => {
     setProfile({
-      name: "Warehouse Admin",
-      email: "admin@wareflow.com",
-      role: "Administrator",
+      name: user?.name || "",
+      email: user?.email || "",
+      role: user?.role === "admin" ? "Administrator" : "Staff",
     });
 
     setWarehouse({

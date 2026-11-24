@@ -1,7 +1,9 @@
 const mongoose = require('mongoose');
+const ownershipPlugin = require('../middleware/ownershipPlugin');
 const { Schema } = mongoose;
 
 const TicketSchema = new Schema({
+  ownerId: { type: Schema.Types.ObjectId, ref: 'users', required: true, index: true },
   customerId: { type: Schema.Types.ObjectId, ref: 'customers' },
   status: {
     type: String
@@ -37,5 +39,7 @@ const TicketSchema = new Schema({
   },
   cart: { type: String }
 });
+
+TicketSchema.plugin(ownershipPlugin);
 
 module.exports = mongoose.model('tickets', TicketSchema);

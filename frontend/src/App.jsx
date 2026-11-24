@@ -1,9 +1,13 @@
 import SettingsPage from "./pages/Settings";
 import OtherPages from "./pages/OtherPages";
 import Orders from "./pages/Orders";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Inventory from "./pages/Inventory";
 import Products from "./pages/Products";
+import AuthPage from "./pages/AuthPage";
+import SuperAdminDashboard from "./pages/SuperAdminDashboard";
+import PasswordChange from "./pages/PasswordChange";
+import api from "./api";
 
 import {
   LayoutDashboard,
@@ -38,63 +42,88 @@ const menuItems = [
   { name: "Reports", icon: BarChart3 },
 ];
 
-const products = [
-  {
-    id: "PRD-001",
-    name: "Wireless Headphones",
-    category: "Electronics",
-    stock: 145,
-    price: "₹2,499",
-    status: "In Stock",
-  },
-  {
-    id: "PRD-002",
-    name: "Mechanical Keyboard",
-    category: "Accessories",
-    stock: 12,
-    price: "₹3,999",
-    status: "Low Stock",
-  },
-  {
-    id: "PRD-003",
-    name: "Smart Watch",
-    category: "Electronics",
-    stock: 0,
-    price: "₹5,499",
-    status: "Out of Stock",
-  },
-  {
-    id: "PRD-004",
-    name: "USB-C Hub",
-    category: "Accessories",
-    stock: 86,
-    price: "₹1,299",
-    status: "In Stock",
-  },
-  {
-    id: "PRD-005",
-    name: "Bluetooth Speaker",
-    category: "Electronics",
-    stock: 8,
-    price: "₹2,199",
-    status: "Low Stock",
-  },
-];
-
 function App() {
   const [activePage, setActivePage] = useState("Dashboard");
-
   const [globalSearch, setGlobalSearch] = useState("");
   const [inventorySearchTerm, setInventorySearchTerm] = useState("");
+  const [session, setSession] = useState(null);
+  const [authReady, setAuthReady] = useState(false);
+  const [dashboardProducts, setDashboardProducts] = useState([]);
+  const [dashboardSummary, setDashboardSummary] = useState(null);
 
-  const globalResults = products.filter((product) => {
+  useEffect(() => {
+    const token = localStorage.getItem("wms.auth.token");
+    if (!token) {
+      setAuthReady(true);
+      return;
+    }
+    api.get("/auth/user")
+      .then(({ data }) => setSession({ token, user: data.user }))
+      .catch(() => {
+        localStorage.removeItem("wms.auth.token");
+        localStorage.removeItem("wms.auth.user");
+      })
+      .finally(() => setAuthReady(true));
+  }, []);
+
+  useEffect(() => {
+    if (!session) return;
+    Promise.all([api.get("/products"), api.get("/inventory"), api.get("/reports/summary")])
+      .then(([productsResponse, inventoryResponse, summaryResponse]) => {
+        const inventoryBySku = new Map(inventoryResponse.data.data.map((row) => [row._id, row.availableQuantity]));
+        setDashboardProducts(productsResponse.data.data.map((item) => ({
+          id: item.skuNumber,
+          name: item.name,
+          category: item.department,
+          skuNumber: item.skuNumber,
+          stock: inventoryBySku.get(item.skuNumber) || 0,
+          price: Number(item.price || 0),
+          reorderLevel: Number(item.reorderLevel || 0),
+        })));
+        setDashboardSummary(summaryResponse.data.data);
+      })
+      .catch(() => {
+        setDashboardProducts([]);
+        setDashboardSummary(null);
+      });
+  }, [session]);
+
+  const handleAuthenticated = (payload) => {
+    localStorage.setItem("wms.auth.token", payload.token);
+    localStorage.setItem("wms.auth.user", JSON.stringify(payload.user));
+    setSession({ token: payload.token, user: payload.user });
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem("wms.auth.token");
+    localStorage.removeItem("wms.auth.user");
+    setSession(null);
+    setDashboardProducts([]);
+    setDashboardSummary(null);
+  };
+
+  const handleSessionUpdated = (updatedSession) => {
+    localStorage.setItem("wms.auth.user", JSON.stringify(updatedSession.user));
+    setSession(updatedSession);
+  };
+
+  if (!authReady) return <div className="auth-loading">Checking your session…</div>;
+  if (!session) return <AuthPage onAuthenticated={handleAuthenticated} />;
+  if (session.user.mustChangePassword) {
+    return <PasswordChange session={session} onUpdated={handleSessionUpdated} onLogout={handleLogout} />;
+  }
+  if (session.user.role === "superadmin") {
+    return <SuperAdminDashboard user={session.user} onLogout={handleLogout} />;
+  }
+
+  const globalResults = dashboardProducts.filter((product) => {
     const query = globalSearch.trim().toLowerCase();
 
     if (!query) return false;
 
     return (
       product.name.toLowerCase().includes(query) ||
-      product.id.toLowerCase().includes(query) ||
+      product.skuNumber.toLowerCase().includes(query) ||
       product.category.toLowerCase().includes(query)
     );
   });
@@ -102,32 +131,32 @@ function App() {
   const stats = [
     {
       title: "Total Products",
-      value: "1,248",
-      change: "+12.5%",
+      value: String(dashboardSummary?.productCount ?? dashboardProducts.length),
+      change: "From database",
       up: true,
       icon: Package,
       color: "blue",
     },
     {
       title: "Total Stock Units",
-      value: "8,540",
-      change: "+8.2%",
+      value: (dashboardSummary?.totalAvailableQuantity ?? 0).toLocaleString("en-IN"),
+      change: "Available units",
       up: true,
       icon: Boxes,
       color: "green",
     },
     {
       title: "Active Orders",
-      value: "186",
-      change: "+5.4%",
+      value: "—",
+      change: "Orders summary unavailable",
       up: true,
       icon: Truck,
       color: "purple",
     },
     {
       title: "Low Stock Items",
-      value: "24",
-      change: "-3.1%",
+      value: String(dashboardProducts.filter((product) => product.reorderLevel > 0 && product.stock <= product.reorderLevel).length),
+      change: "Based on reorder levels",
       up: false,
       icon: Bell,
       color: "orange",
@@ -186,12 +215,13 @@ function App() {
           </button>
 
           <div className="profile">
-            <div className="avatar">SA</div>
+            <div className="avatar">{session.user.name.slice(0, 2).toUpperCase()}</div>
 
             <div>
-              <strong>Warehouse Admin</strong>
-              <span>Administrator</span>
+              <strong>{session.user.name}</strong>
+              <span>{session.user.role === "admin" ? "Administrator" : "Staff"}</span>
             </div>
+            <button className="logout-btn" type="button" onClick={handleLogout}>Log out</button>
           </div>
         </div>
       </aside>
@@ -254,7 +284,7 @@ function App() {
               <span></span>
             </button>
 
-            <div className="top-avatar">SA</div>
+            <div className="top-avatar">{session.user.name.slice(0, 2).toUpperCase()}</div>
           </div>
         </header>
 
@@ -343,16 +373,16 @@ function App() {
                     </thead>
 
                     <tbody>
-                      {products.map((product) => (
+                      {dashboardProducts.map((product) => (
                         <tr key={product.id}>
                           <td>
                             <strong>{product.name}</strong>
-                            <small>{product.id}</small>
+                            <small>{product.skuNumber}</small>
                           </td>
 
                           <td>{product.category}</td>
                           <td>{product.stock}</td>
-                          <td>{product.price}</td>
+                          <td>₹{product.price.toLocaleString("en-IN")}</td>
 
                           <td>
                             <span
@@ -381,38 +411,16 @@ function App() {
                   <Bell size={19} color="#e69a36" />
                 </div>
 
-                <div className="alert-item">
-                  <div className="alert-dot orange-dot"></div>
-
-                  <div>
-                    <strong>Mechanical Keyboard</strong>
-                    <p>Only 12 units remaining</p>
+                {dashboardProducts.filter((product) => product.reorderLevel > 0 && product.stock <= product.reorderLevel).slice(0, 3).map((product) => (
+                  <div className="alert-item" key={product.id}>
+                    <div className={`alert-dot ${product.stock === 0 ? "red-dot" : "orange-dot"}`}></div>
+                    <div><strong>{product.name}</strong><p>{product.stock === 0 ? "Currently out of stock" : `Only ${product.stock} units remaining`}</p></div>
+                    <span>{product.stock}</span>
                   </div>
-
-                  <span>12</span>
-                </div>
-
-                <div className="alert-item">
-                  <div className="alert-dot red-dot"></div>
-
-                  <div>
-                    <strong>Smart Watch</strong>
-                    <p>Currently out of stock</p>
-                  </div>
-
-                  <span>0</span>
-                </div>
-
-                <div className="alert-item">
-                  <div className="alert-dot orange-dot"></div>
-
-                  <div>
-                    <strong>Bluetooth Speaker</strong>
-                    <p>Only 8 units remaining</p>
-                  </div>
-
-                  <span>8</span>
-                </div>
+                ))}
+                {dashboardProducts.filter((product) => product.reorderLevel > 0 && product.stock <= product.reorderLevel).length === 0 && (
+                  <div className="alert-item"><div><strong>No low stock alerts</strong><p>Items at or below their reorder level will appear here.</p></div></div>
+                )}
 
                 <button className="alert-button">
                   View all alerts
@@ -429,44 +437,18 @@ function App() {
                 </div>
               </div>
 
-              <div className="activity-row">
-                <div className="activity-icon green">
-                  <ArrowDownRight size={19} />
+              {(dashboardSummary?.recentMovements || []).slice(0, 5).map((movement) => (
+                <div className="activity-row" key={movement._id}>
+                  <div className={`activity-icon ${movement.type === "stock-in" ? "green" : movement.type === "stock-out" ? "blue" : "purple"}`}>
+                    {movement.type === "stock-in" ? <ArrowDownRight size={19} /> : movement.type === "stock-out" ? <Truck size={19} /> : <Package size={19} />}
+                  </div>
+                  <div><strong>{movement.type === "stock-in" ? "Stock received" : movement.type === "stock-out" ? "Stock shipped" : "Stock adjusted"}</strong><p>{movement.skuNumber} · {movement.quantity} units · {movement.reason}</p></div>
+                  <time>{new Date(movement.createdAt).toLocaleString("en-IN")}</time>
                 </div>
-
-                <div>
-                  <strong>Stock received</strong>
-                  <p>Wireless Headphones · 50 units added</p>
-                </div>
-
-                <time>10 min ago</time>
-              </div>
-
-              <div className="activity-row">
-                <div className="activity-icon blue">
-                  <Truck size={19} />
-                </div>
-
-                <div>
-                  <strong>Order dispatched</strong>
-                  <p>Order #ORD-1024 · Shipment processed</p>
-                </div>
-
-                <time>35 min ago</time>
-              </div>
-
-              <div className="activity-row">
-                <div className="activity-icon purple">
-                  <Package size={19} />
-                </div>
-
-                <div>
-                  <strong>New product added</strong>
-                  <p>Bluetooth Speaker · Electronics</p>
-                </div>
-
-                <time>1 hour ago</time>
-              </div>
+              ))}
+              {(!dashboardSummary?.recentMovements || dashboardSummary.recentMovements.length === 0) && (
+                <div className="activity-row"><div><strong>No inventory activity yet</strong><p>Stock movements will appear here after the first receiving or adjustment.</p></div></div>
+              )}
             </section>
 
             <footer>
@@ -474,15 +456,15 @@ function App() {
             </footer>
           </section>
         ) : activePage === "Products" ? (
-          <Products />
+          <Products user={session.user} />
         ) : activePage === "Inventory" ? (
           <Inventory searchTerm={inventorySearchTerm} />
         ) : activePage === "Orders" ? (
           <Orders />
         ) : activePage === "Settings" ? (
-          <SettingsPage />
+          <SettingsPage user={session.user} />
         ) : (
-          <OtherPages key={activePage} activePage={activePage} />
+          <OtherPages key={activePage} activePage={activePage} user={session.user} />
         )}
       </main>
     </div>

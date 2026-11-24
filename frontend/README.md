@@ -1,16 +1,17 @@
-# React + Vite
+# WMS F Frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+React and Vite interface for the WMS backend.
 
-Currently, two official plugins are available:
+## Run locally
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+Start the backend first in `backend` (`npm run dev`). Then, from this directory:
 
-## React Compiler
+```powershell
+Copy-Item .env.example .env
+npm install
+npm run dev
+```
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+The default API base is `http://127.0.0.1:5000`. Change `VITE_API_URL` in `.env` only if the backend runs at a different address. This variable is public browser configuration; do not put database credentials or JWT secrets in the frontend environment file.
 
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and Oxlint's TypeScript related rules in your project.
+The sign-in and sign-up forms use `/api/auth/login` and `/api/auth/register`. The token is stored in browser local storage and sent as a bearer token on protected requests. Products, inventory, categories, suppliers, warehouses, locations, reports, and order status requests use the backend API.

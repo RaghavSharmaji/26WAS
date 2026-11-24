@@ -26,7 +26,12 @@ const UserSchema = new Schema({
       type: String
     }
   ],
-  role: { type: String, enum: ['admin', 'staff'], default: 'staff', index: true },
+  role: { type: String, enum: ['superadmin', 'admin', 'staff'], default: 'staff', index: true },
+  phone: { type: String, trim: true, default: '' },
+  accountStatus: { type: String, enum: ['active', 'inactive', 'deleted'], default: 'active', index: true },
+  lastLoginAt: { type: Date, default: null },
+  deletedAt: { type: Date, default: null },
+  mustChangePassword: { type: Boolean, default: false },
   status: { type: String },
   date: {
     type: Date,

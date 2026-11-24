@@ -1,10 +1,12 @@
 /* eslint-disable no-undef */
 /* eslint-disable no-multi-assign */
 const mongoose = require('mongoose');
+const ownershipPlugin = require('../middleware/ownershipPlugin');
 
 const { Schema } = mongoose;
 
 const LocationSchema = new Schema({
+  ownerId: { type: Schema.Types.ObjectId, ref: 'users', required: true, index: true },
   zone: {
     type: String,
     required: true,
@@ -31,7 +33,7 @@ const LocationSchema = new Schema({
   fullName: {
     type: String,
     required: true,
-    unique: true
+    trim: true
   },
   warehouse: {
     type: Schema.Types.ObjectId,
@@ -62,5 +64,8 @@ const LocationSchema = new Schema({
     default: Date.now
   }
 });
+
+LocationSchema.index({ ownerId: 1, fullName: 1 }, { unique: true });
+LocationSchema.plugin(ownershipPlugin);
 
 module.exports = mongoose.model('locations', LocationSchema);

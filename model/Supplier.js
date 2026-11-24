@@ -1,7 +1,9 @@
 const mongoose = require('mongoose');
+const ownershipPlugin = require('../middleware/ownershipPlugin');
 
 const SupplierSchema = new mongoose.Schema(
   {
+    ownerId: { type: mongoose.Schema.Types.ObjectId, ref: 'users', required: true, index: true },
     name: { type: String, required: true, trim: true },
     contactName: { type: String, trim: true, default: '' },
     email: { type: String, trim: true, lowercase: true, default: undefined },
@@ -11,6 +13,7 @@ const SupplierSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
-SupplierSchema.index({ email: 1 }, { unique: true, sparse: true });
+SupplierSchema.index({ ownerId: 1, email: 1 }, { unique: true, sparse: true });
+SupplierSchema.plugin(ownershipPlugin);
 
 module.exports = mongoose.model('suppliers', SupplierSchema);

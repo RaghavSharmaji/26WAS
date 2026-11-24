@@ -1,10 +1,12 @@
 /* eslint-disable no-undef */
 /* eslint-disable no-multi-assign */
 const mongoose = require('mongoose');
+const ownershipPlugin = require('../middleware/ownershipPlugin');
 
 const { Schema } = mongoose;
 
 const OrderSchema = new Schema({
+  ownerId: { type: Schema.Types.ObjectId, ref: 'users', required: true, index: true },
   ticketsId: [{ type: Schema.Types.ObjectId, ref: 'tickets' }],
   customerId: { type: Schema.Types.ObjectId, ref: 'customers' },
   status: {
@@ -44,5 +46,7 @@ const OrderSchema = new Schema({
     default: Date.now
   }
 });
+
+OrderSchema.plugin(ownershipPlugin);
 
 module.exports = mongoose.model('orders', OrderSchema);

@@ -33,7 +33,7 @@ function item(body, { partial = false } = {}) {
       data[key] = body[key].trim();
     }
   });
-  ['ounce', 'reorderLevel'].forEach(key => {
+  ['ounce', 'reorderLevel', 'price'].forEach(key => {
     if (body[key] !== undefined) data[key] = positiveNumber(body[key], key, { allowZero: true });
   });
   ['category', 'suppliers'].forEach(key => {

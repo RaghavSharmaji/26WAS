@@ -1,6 +1,7 @@
 /* eslint-disable no-undef */
 /* eslint-disable no-multi-assign */
 const mongoose = require('mongoose');
+const ownershipPlugin = require('../middleware/ownershipPlugin');
 
 const { Schema } = mongoose;
 
@@ -19,6 +20,7 @@ const StockMovementSchema = new Schema(
 );
 
 const PalletSchema = new Schema({
+  ownerId: { type: Schema.Types.ObjectId, ref: 'users', required: true, index: true },
   item: { type: Schema.Types.ObjectId, ref: 'items' },
   size: {
     type: Number,
@@ -69,7 +71,8 @@ const PalletSchema = new Schema({
   }
 });
 
-PalletSchema.index({ skuNumber: 1, location: 1 });
+PalletSchema.index({ ownerId: 1, skuNumber: 1, location: 1 });
 PalletSchema.index({ 'movementLog.createdAt': -1 });
+PalletSchema.plugin(ownershipPlugin);
 
 module.exports = mongoose.model('pallets', PalletSchema);

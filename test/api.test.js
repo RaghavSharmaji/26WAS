@@ -62,6 +62,16 @@ describe('authentication and resource APIs', () => {
     expect(User.create.mock.calls[0][0].password).not.toBe('correct-horse-battery');
   });
 
+  test('public registration cannot assign the Super Admin role', async () => {
+    User.create.mockImplementation(async value => ({ ...value, _id: staffId }));
+    const response = await request(app).post('/api/auth/register').send({
+      name: 'New Account', email: 'new@example.com', password: 'correct-horse-battery', role: 'superadmin', clearance: ['superadmin']
+    });
+    expect(response.status).toBe(201);
+    expect(response.body.user.role).toBe('staff');
+    expect(User.create.mock.calls[0][0].role).toBe('staff');
+  });
+
   test('validates registration fields before writing', async () => {
     const response = await request(app).post('/api/auth/register').send({ email: 'bad', password: 'short' });
     expect(response.status).toBe(400);
@@ -95,6 +105,14 @@ describe('authentication and resource APIs', () => {
       .set('Authorization', `Bearer ${tokenFor(staffId, 'staff')}`);
     expect(response.status).toBe(200);
     expect(response.body.user.password).toBeUndefined();
+  });
+
+  test('temporary-password accounts are blocked from application APIs', async () => {
+    User.findById.mockResolvedValue({ _id: staffId, role: 'staff', mustChangePassword: true });
+    const response = await request(app).get('/api/categories')
+      .set('Authorization', `Bearer ${tokenFor(staffId, 'staff')}`);
+    expect(response.status).toBe(403);
+    expect(response.body.code).toBe('PASSWORD_CHANGE_REQUIRED');
   });
 
   test('creates a category and maps duplicate unique values to 409', async () => {
@@ -194,5 +212,18 @@ describe('authentication and resource APIs', () => {
     const denied = await request(app).delete('/api/categories/64b000000000000000000003')
       .set('Authorization', `Bearer ${tokenFor(staffId, 'staff')}`);
     expect(denied.status).toBe(403);
+  });
+
+  test('staff and legacy admins cannot access Super Admin APIs', async () => {
+    User.findById.mockImplementation(async id => ({ _id: id, role: id === adminId ? 'admin' : 'staff' }));
+    for (const id of [staffId, adminId]) {
+      const response = await request(app).get('/api/admin/users')
+        .set('Authorization', `Bearer ${tokenFor(id, id === adminId ? 'admin' : 'staff')}`);
+      expect(response.status).toBe(403);
+      expect(response.body.message).toMatch(/insufficient permissions/i);
+    }
+    const forgedRole = await request(app).get('/api/admin/users')
+      .set('Authorization', `Bearer ${tokenFor(staffId, 'superadmin')}`);
+    expect(forgedRole.status).toBe(403);
   });
 });

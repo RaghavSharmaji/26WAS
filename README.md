@@ -1,16 +1,15 @@
-# Warehouse Management System — Phase 1 Backend
+# WareFlow — Warehouse Management System
 
-This repository contains the Node.js API and MongoDB persistence layer for a Warehouse Management System (WMS). It is a backend-only Phase 1 submission. The frontend and final integration are future phases.
+WareFlow contains a React/Vite frontend and a Node.js/Express/Mongoose API. The API supports normal warehouse accounts and a separately protected Super Admin console.
 
 ## Development phases
 
-1. **Phase 1 — Backend (implemented):** Express server, MongoDB models, authentication, product/item catalog, categories, suppliers, warehouses, locations, pallets, inventory movements, reports, validation, and API tests.
-2. **Phase 2 — Frontend (future):** React pages, login, dashboard, and management screens that consume this API.
-3. **Phase 3 — Integration and polish (future):** end-to-end workflows, deployment preparation, and further security/performance work.
+1. Express API, MongoDB models, JWT authentication, owner-scoped warehouse records, reports, and tests.
+2. React/Vite normal user dashboard and Super Admin administration console.
 
 ## Technology and structure
 
-- Node.js, Express 4, Mongoose 5, MongoDB
+- Node.js, Express 4, Mongoose 6.13.8, MongoDB
 - JWT bearer authentication; passwords hashed with bcrypt
 - Jest and Supertest for automated tests
 
@@ -29,7 +28,7 @@ validation/                Older reusable login/registration validators
 
 ## Setup
 
-Requirements: Node.js 18 or newer and MongoDB. Create `.env` from the template only when it does not already exist, then replace the placeholder JWT secret with a strong random value:
+Requirements: Node.js 18 or newer and MongoDB (Atlas or local). Create `backend/.env` from its template only if you do not already have one, then set the database URI, JWT secret, and Super Admin credentials:
 
 ```powershell
 if (-not (Test-Path .env)) { Copy-Item .env.example .env }
@@ -38,18 +37,36 @@ npm install
 npm run dev
 ```
 
-The server checks `MONGODB_URI` and `SECRET_OR_KEY`, connects to MongoDB, and only then listens. `PORT` defaults to `5000`. Keep the server terminal open while making requests from a second PowerShell window. `.env` is ignored by Git.
+The backend requires `MONGODB_URI`, `SECRET_OR_KEY`, `SUPER_ADMIN_NAME`, `SUPER_ADMIN_EMAIL`, and a private `SUPER_ADMIN_PASSWORD` of 12–128 characters. Replace the example password before startup. The first successful connection provisions one hashed Super Admin account; later restarts do not replace its password. To intentionally update that password, change `SUPER_ADMIN_PASSWORD` in `.env` and run `npm run superadmin:reset-password` from `backend`. Keep `.env` private; it is ignored by Git.
+
+Start the frontend in a second terminal:
+
+```powershell
+cd ..\frontend
+npm install
+npm run dev
+```
+
+The frontend defaults to `http://127.0.0.1:5000/api`. Set `VITE_API_URL` only if your backend is on a different host or port.
+
+### Existing database records
+
+Warehouse records created before user ownership was added do not yet belong to an account. Back up the database, set `LEGACY_DATA_OWNER_EMAIL` in `backend/.env` to the existing normal user who should own those records, and run `npm run ownership:migrate` once from `backend`. This assigns only records without an owner and updates the old global uniqueness indexes to be account-scoped. Do not run it until you have chosen the correct account; the migration cannot infer ownership from old records.
 
 To create the first administrator, set `WMS_ADMIN_NAME`, `WMS_ADMIN_EMAIL`, and a strong `WMS_ADMIN_PASSWORD` in your local `.env`, then run `npm run seed:admin`. The script creates an admin or promotes the matching existing account. It never prints the password. Public registration always creates a `staff` account; only administrators can delete master records and products/pallets where deletion is allowed.
 
 ## Authentication
 
-- `POST /api/auth/register` creates a staff user and returns a JWT.
+- `POST /api/auth/register` creates a normal staff user and returns a JWT. Submitted role fields are ignored.
 - `POST /api/auth/login` returns a JWT for valid credentials. `POST /api/auth` remains as a compatibility alias.
 - Send the token as `Authorization: Bearer <token>` on protected endpoints. The older `x-auth-token` header is also accepted.
 - `GET /api/auth/user` returns the current user's public profile.
 - `POST /api/auth/logout` documents stateless logout; clients must discard their token.
-- Protected resource routes require authentication. Delete routes that can remove master data require the `admin` role.
+- Normal authenticated users see and update only records owned by their account. Existing `admin` accounts retain their previous normal-dashboard permissions.
+- Super Admin endpoints are under `/api/admin` and require a database-backed `superadmin` role. Normal users and legacy admins are denied.
+- The Super Admin UI includes global monitoring, account search/filter/pagination, account editing/status changes, soft deletion, temporary password resets, per-user data tabs, and a read-only user-dashboard preview.
+- User deletion is soft deletion: records are preserved, and the account cannot sign in. Admin actions and sign-ins are recorded in `audit_logs`.
+- Password-reset users must update their temporary password before the normal dashboard is shown.
 - Password hashes are excluded from responses and normal user queries.
 
 PowerShell login example:
@@ -181,6 +198,6 @@ The API was also exercised against the configured local MongoDB using temporary 
 - Stock values and the corresponding movement event are updated atomically within one pallet document using a compare-and-set retry. This works on standalone MongoDB and avoids claiming multi-document transaction support.
 - The movement ledger is embedded per pallet; very long-lived/high-volume pallets may eventually need ledger archival or a replica-set transaction design.
 - Legacy multi-document order/ticket workflows remain for compatibility and are not guaranteed all-or-nothing across a multi-pallet order. The canonical inventory stock operations are single-pallet atomic operations.
-- The repository retains old Mongoose 5-era route code and emits deprecation/circular-dependency warnings. The modern routes centralize validation/errors; legacy endpoints may have older response conventions.
+- MongoDB access uses Mongoose 6.13.8 and the MongoDB 4.17 driver to support Atlas connection strings on current Node.js versions. Some older routes retain legacy response conventions.
 - The external scraper depends on a third-party catalog site and Puppeteer/Chromium. No category, supplier, warehouse, or inventory UI is included in this Phase 1 backend.
 - `npm install` reports 48 dependency advisories in this legacy dependency tree (4 low, 10 moderate, 28 high, 6 critical). Review and upgrade dependencies before production deployment.

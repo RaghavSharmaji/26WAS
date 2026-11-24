@@ -1,5 +1,5 @@
 
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   Search,
   ShoppingCart,
@@ -11,62 +11,36 @@ import {
 } from "lucide-react";
 
 import "./Orders.css";
+import api, { getApiError } from "../api";
 
 function Orders() {
-  const [orders, setOrders] = useState([
-    {
-      id: "ORD-1024",
-      customer: "Rahul Sharma",
-      date: "13 Nov 2026",
-      items: 3,
-      amount: 7499,
-      status: "Delivered",
-    },
-    {
-      id: "ORD-1025",
-      customer: "Priya Verma",
-      date: "13 Nov 2026",
-      items: 2,
-      amount: 4299,
-      status: "Processing",
-    },
-    {
-      id: "ORD-1026",
-      customer: "Aman Gupta",
-      date: "12 Nov 2026",
-      items: 5,
-      amount: 12499,
-      status: "Pending",
-    },
-    {
-      id: "ORD-1027",
-      customer: "Sneha Kapoor",
-      date: "12 Nov 2026",
-      items: 1,
-      amount: 2499,
-      status: "Shipped",
-    },
-    {
-      id: "ORD-1028",
-      customer: "Karan Mehta",
-      date: "11 Nov 2026",
-      items: 4,
-      amount: 8999,
-      status: "Delivered",
-    },
-    {
-      id: "ORD-1029",
-      customer: "Neha Singh",
-      date: "11 Nov 2026",
-      items: 2,
-      amount: 5999,
-      status: "Pending",
-    },
-  ]);
+  const [orders, setOrders] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("All");
   const [selectedOrder, setSelectedOrder] = useState(null);
+
+  const loadOrders = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const { data } = await api.get("/order");
+      const rows = data.data || data.allOrder || [];
+      setOrders(rows.map((order) => ({
+        id: order._id,
+        customer: order.customerId?.name || "—",
+        date: new Date(order.date).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }),
+        items: Array.isArray(order.items) ? order.items.length : 0,
+        amount: order.amount == null ? null : Number(order.amount),
+        status: ({ create: "Pending", pending: "Pending", processing: "Processing", shipped: "Shipped", delivered: "Delivered" })[String(order.status || "pending").toLowerCase()] || "Pending",
+      })));
+    } catch (requestError) { setError(getApiError(requestError)); }
+    finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => { loadOrders(); }, [loadOrders]);
 
   const totalOrders = orders.length;
   const pendingOrders = orders.filter(
@@ -92,27 +66,20 @@ function Orders() {
     return matchesSearch && matchesFilter;
   });
 
-  const formatAmount = (amount) =>
+  const formatAmount = (amount) => amount == null ? "—" :
     amount.toLocaleString("en-IN", {
       style: "currency",
       currency: "INR",
       maximumFractionDigits: 0,
     });
 
-  const updateStatus = (orderId, newStatus) => {
-    setOrders((previousOrders) =>
-      previousOrders.map((order) =>
-        order.id === orderId
-          ? { ...order, status: newStatus }
-          : order
-      )
-    );
-
-    setSelectedOrder((previousOrder) =>
-      previousOrder
-        ? { ...previousOrder, status: newStatus }
-        : null
-    );
+  const updateStatus = async (orderId, newStatus) => {
+    setError("");
+    try {
+      await api.put(`/order/${orderId}/status`, { status: newStatus });
+      setSelectedOrder((previousOrder) => previousOrder ? { ...previousOrder, status: newStatus } : null);
+      await loadOrders();
+    } catch (requestError) { setError(getApiError(requestError)); }
   };
 
   return (
@@ -123,6 +90,8 @@ function Orders() {
           <p>Track and manage your warehouse orders.</p>
         </div>
       </div>
+
+      {error && <div className="data-error" role="alert">{error}</div>}
 
       {/* ORDER SUMMARY */}
       <div className="orders-stats">
@@ -214,7 +183,7 @@ function Orders() {
             </thead>
 
             <tbody>
-              {filteredOrders.map((order) => (
+              {loading ? <tr><td colSpan="7" className="orders-empty">Loading orders…</td></tr> : filteredOrders.map((order) => (
                 <tr key={order.id}>
                   <td>
                     <strong>{order.id}</strong>
@@ -250,7 +219,7 @@ function Orders() {
                 </tr>
               ))}
 
-              {filteredOrders.length === 0 && (
+              {!loading && filteredOrders.length === 0 && (
                 <tr>
                   <td colSpan="7" className="orders-empty">
                     No orders found.

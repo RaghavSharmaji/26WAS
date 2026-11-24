@@ -86,6 +86,11 @@
 
 .profile strong { font-size: 12px; }
 .profile span { display: block; font-size: 11px; color: #aab8cb; margin-top: 4px; }
+.logout-btn { margin-left: auto; border: 1px solid #40536d; border-radius: 6px; padding: 7px 9px; background: transparent; color: #c5d0df; font-size: 11px; cursor: pointer; }
+.logout-btn:hover { background: #263e60; color: #fff; }
+.auth-loading { min-height: 100vh; display: grid; place-items: center; color: #fff; background: #14243b; }
+.data-error { margin: 0 30px 18px; padding: 12px 14px; border: 1px solid #f1c9c7; border-radius: 8px; color: #a43b36; background: #fff1f0; font-size: 13px; }
+.data-empty { text-align: center; padding: 30px !important; color: #8994a5; }
 
 .main-content { flex: 1; min-width: 0; }
 

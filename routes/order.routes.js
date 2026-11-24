@@ -3,6 +3,7 @@
 /* eslint-disable no-undef */
 /* eslint-disable node/no-unsupported-features/es-syntax */
 const express = require('express');
+const mongoose = require('mongoose');
 
 const router = express.Router();
 // const Item = require('../model/Item');
@@ -12,11 +13,12 @@ const Orders = require('../model/Order');
 
 router.get('/', async (req, res) => {
   try {
-    const allOrder = await Orders.find();
+    const allOrder = await Orders.find().sort({ date: -1 }).lean();
     res.json({
       success: true,
       message: 'all orders',
-      allOrder
+      allOrder,
+      data: allOrder
     });
   } catch (err) {
     console.error(err);
@@ -24,6 +26,24 @@ router.get('/', async (req, res) => {
       success: false,
       err: err
     });
+  }
+});
+
+router.put('/:id/status', async (req, res) => {
+  if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+    return res.status(400).json({ success: false, message: 'Invalid order ID' });
+  }
+  const allowed = ['Pending', 'Processing', 'Shipped', 'Delivered'];
+  if (!allowed.includes(req.body && req.body.status)) {
+    return res.status(400).json({ success: false, message: 'Invalid order status' });
+  }
+  try {
+    const order = await Orders.findByIdAndUpdate(req.params.id, { status: req.body.status.toLowerCase() }, { new: true, runValidators: true });
+    if (!order) return res.status(404).json({ success: false, message: 'Order not found' });
+    return res.json({ success: true, data: order });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ success: false, message: 'Could not update order status' });
   }
 });
 

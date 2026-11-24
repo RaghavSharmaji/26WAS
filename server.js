@@ -1,7 +1,8 @@
-require('express-async-errors');
 require('dotenv').config();
+require('express-async-errors');
 const express = require('express');
 const mongoose = require('mongoose');
+mongoose.set('strictQuery', false);
 const cors = require('cors');
 const auth = require('./middleware/auth');
 const errorHandler = require('./middleware/errorHandler');
@@ -26,8 +27,17 @@ const locationCrudRoutes = require('./routes/locationCrud.routes');
 const palletCrudRoutes = require('./routes/palletCrud.routes');
 const inventoryRoutes = require('./routes/inventory.routes');
 const reportRoutes = require('./routes/report.routes');
+const adminRoutes = require('./routes/admin.routes');
+const ensureSuperAdmin = require('./scripts/ensureSuperAdmin');
 
-app.use(cors());
+const allowedOrigins = (process.env.CORS_ORIGINS || 'http://localhost:5173,http://127.0.0.1:5173')
+  .split(',').map(origin => origin.trim()).filter(Boolean);
+app.use(cors({
+  origin(origin, callback) {
+    if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
+    return callback(new Error('This web origin is not allowed by CORS'));
+  }
+}));
 app.use(express.json({ limit: '1mb' }));
 
 app.get('/api/health', (req, res) => {
@@ -39,6 +49,7 @@ app.get('/api/health', (req, res) => {
 });
 
 app.use('/api/auth', authRoutes);
+app.use('/api/admin', auth, auth.requireRole('superadmin'), adminRoutes);
 app.use('/api/categories', categoryRoutes);
 app.use('/api/suppliers', supplierRoutes);
 app.use('/api/warehouses', warehouseRoutes);
@@ -65,9 +76,18 @@ app.use(errorHandler);
 async function start() {
   const port = Number(process.env.PORT || 5000);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('PORT must be an integer from 1 to 65535');
-  if (!process.env.MONGODB_URI) throw new Error('MONGODB_URI is required');
-  if (!process.env.SECRET_OR_KEY) throw new Error('SECRET_OR_KEY is required');
-  await mongoose.connect(process.env.MONGODB_URI, { useNewUrlParser: true, useUnifiedTopology: true });
+  const mongoUri = process.env.MONGODB_URI && process.env.MONGODB_URI.trim();
+  if (!mongoUri) {
+    throw new Error('MONGODB_URI is required. Set it in backend/.env (for example: mongodb://127.0.0.1:27017/wms_f).');
+  }
+  if (!/^mongodb(?:\+srv)?:\/\//i.test(mongoUri)) {
+    throw new Error('MONGODB_URI must start with mongodb:// or mongodb+srv://.');
+  }
+  if (!process.env.SECRET_OR_KEY || !process.env.SECRET_OR_KEY.trim()) {
+    throw new Error('SECRET_OR_KEY is required. Set a private random value in backend/.env.');
+  }
+  await mongoose.connect(mongoUri);
+  await ensureSuperAdmin();
   console.log('MongoDB connected');
   const server = await new Promise((resolve, reject) => {
     const listener = app.listen(port, () => resolve(listener));

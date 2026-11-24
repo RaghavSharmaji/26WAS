@@ -1,5 +1,5 @@
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 
 import {
   Search,
@@ -13,55 +13,41 @@ import {
 } from "lucide-react";
 
 import "./Inventory.css";
+import api, { getApiError } from "../api";
 
 function Inventory({ searchTerm = "" }) {
-  const [items, setItems] = useState([
-    {
-      id: 1,
-      name: "Wireless Headphones",
-      category: "Electronics",
-      sku: "PRD-001",
-      stock: 145,
-      minimum: 20,
-    },
-    {
-      id: 2,
-      name: "Mechanical Keyboard",
-      category: "Accessories",
-      sku: "PRD-002",
-      stock: 12,
-      minimum: 20,
-    },
-    {
-      id: 3,
-      name: "Smart Watch",
-      category: "Electronics",
-      sku: "PRD-003",
-      stock: 0,
-      minimum: 15,
-    },
-    {
-      id: 4,
-      name: "USB-C Hub",
-      category: "Accessories",
-      sku: "PRD-004",
-      stock: 86,
-      minimum: 20,
-    },
-    {
-      id: 5,
-      name: "Bluetooth Speaker",
-      category: "Electronics",
-      sku: "PRD-005",
-      stock: 8,
-      minimum: 20,
-    },
-  ]);
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
 
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("All");
   const [selectedItem, setSelectedItem] = useState(null);
   const [quantity, setQuantity] = useState("");
+
+  const loadInventory = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const [productsResponse, inventoryResponse] = await Promise.all([api.get("/products"), api.get("/inventory")]);
+      const stockBySku = new Map(inventoryResponse.data.data.map((row) => [row._id, Number(row.availableQuantity || 0)]));
+      setItems(productsResponse.data.data.map((product) => ({
+        id: product._id,
+        name: product.name,
+        category: product.department,
+        sku: product.skuNumber,
+        stock: stockBySku.get(product.skuNumber) || 0,
+        minimum: Number(product.reorderLevel || 0),
+      })));
+    } catch (requestError) {
+      setError(getApiError(requestError));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { loadInventory(); }, [loadInventory]);
 
   // Receive search text from the top global search
   useEffect(() => {
@@ -103,7 +89,7 @@ function Inventory({ searchTerm = "" }) {
   });
 
   // Add or remove stock
-  const updateStock = (type) => {
+  const updateStock = async (type) => {
     const amount = Number(quantity);
 
     if (!Number.isInteger(amount) || amount <= 0) {
@@ -116,22 +102,33 @@ function Inventory({ searchTerm = "" }) {
       return;
     }
 
-    setItems((previousItems) =>
-      previousItems.map((item) => {
-        if (item.id !== selectedItem.id) return item;
-
-        return {
-          ...item,
-          stock:
-            type === "add"
-              ? item.stock + amount
-              : item.stock - amount,
-        };
-      })
-    );
-
-    setSelectedItem(null);
-    setQuantity("");
+    setSaving(true);
+    setError("");
+    try {
+      if (type === "add") {
+        await api.post("/inventory/stock-in", { skuNumber: selectedItem.sku, quantity: amount, reason: "Received from WMS F inventory screen" });
+      } else {
+        const { data } = await api.get("/pallets", { params: { skuNumber: selectedItem.sku } });
+        let remaining = amount;
+        const pallets = data.data.slice().sort((a, b) => Number(b.contAvailable ?? b.cont ?? 0) - Number(a.contAvailable ?? a.cont ?? 0));
+        for (const pallet of pallets) {
+          if (remaining <= 0) break;
+          const available = Number(pallet.contAvailable ?? pallet.cont ?? 0);
+          const toRemove = Math.min(available, remaining);
+          if (!toRemove) continue;
+          await api.post("/inventory/stock-out", { palletId: pallet._id, quantity: toRemove, reason: "Removed from WMS F inventory screen" });
+          remaining -= toRemove;
+        }
+        if (remaining > 0) throw new Error("Inventory changed while updating. Refresh and try again.");
+      }
+      await loadInventory();
+      setSelectedItem(null);
+      setQuantity("");
+    } catch (requestError) {
+      setError(getApiError(requestError));
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -145,6 +142,8 @@ function Inventory({ searchTerm = "" }) {
           </p>
         </div>
       </div>
+
+      {error && <div className="data-error" role="alert">{error}</div>}
 
       {/* SUMMARY CARDS */}
       <div className="inventory-stats">
@@ -241,7 +240,7 @@ function Inventory({ searchTerm = "" }) {
             </thead>
 
             <tbody>
-              {filteredItems.map((item) => {
+              {loading ? <tr><td colSpan="7" className="empty-inventory">Loading inventory…</td></tr> : filteredItems.map((item) => {
                 const status = getStatus(item);
 
                 return (
@@ -286,7 +285,7 @@ function Inventory({ searchTerm = "" }) {
                 );
               })}
 
-              {filteredItems.length === 0 && (
+              {!loading && filteredItems.length === 0 && (
                 <tr>
                   <td colSpan="7" className="empty-inventory">
                     No inventory items found.
@@ -310,7 +309,7 @@ function Inventory({ searchTerm = "" }) {
                 setQuantity("");
               }}
             >
-              <X size={20} />
+                <X size={20} />
             </button>
 
             <h2>Update Stock</h2>
@@ -338,7 +337,7 @@ function Inventory({ searchTerm = "" }) {
             />
 
             <div className="stock-modal-actions">
-              <button
+              <button disabled={saving}
                 type="button"
                 onClick={() => updateStock("add")}
               >
@@ -346,7 +345,7 @@ function Inventory({ searchTerm = "" }) {
                 Add Stock
               </button>
 
-              <button
+              <button disabled={saving}
                 type="button"
                 onClick={() => updateStock("remove")}
               >
