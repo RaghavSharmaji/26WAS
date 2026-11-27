@@ -3,6 +3,7 @@ const bcrypt = require('bcryptjs');
 const mongoose = require('mongoose');
 mongoose.set('strictQuery', false);
 const User = require('../model/User');
+const { isSuperAdminRole } = require('../middleware/roleCompatibility');
 
 async function createOrPromoteAdmin() {
   const { MONGODB_URI, WMS_ADMIN_NAME, WMS_ADMIN_EMAIL, WMS_ADMIN_PASSWORD } = process.env;
@@ -18,7 +19,7 @@ async function createOrPromoteAdmin() {
   const email = WMS_ADMIN_EMAIL.trim().toLowerCase();
   const user = await User.findOne({ email }).select('_id role').lean();
   if (user) {
-    if (user.role === 'superadmin') {
+    if (isSuperAdminRole(user.role)) {
       throw new Error('This account is the Super Admin and cannot be changed by the legacy admin bootstrap script.');
     }
     await User.updateOne({ _id: user._id }, { $set: { role: 'admin', clearance: ['admin'] } });

@@ -11,7 +11,11 @@ const { getAuthContext } = require('../middleware/requestContext');
 const { runWithAuth } = require('../middleware/requestContext');
 const { tenantFilter, assignTenantFields } = require('../middleware/ownershipPlugin');
 const ItemModel = jest.requireActual('../model/Item');
+const ProductModel = jest.requireActual('../model/Product');
+const OrderModel = jest.requireActual('../model/Order');
 const PalletModel = jest.requireActual('../model/Pallets');
+const CustomerModel = jest.requireActual('../model/Customer');
+const ShipmentModel = jest.requireActual('../model/Shipment');
 const WarehouseModel = jest.requireActual('../model/Warehouse');
 const LocationModel = jest.requireActual('../model/Location');
 const CompanyModel = jest.requireActual('../model/Company');
@@ -24,7 +28,7 @@ const userB = '64b000000000000000000002';
 const warehouse1 = '64b000000000000000000030';
 
 function membershipQuery(rows) {
-  return { select: () => ({ lean: async () => rows }) };
+  return { select: () => ({ lean: async () => rows.map(row => ({ status: 'active', ...row })) }) };
 }
 
 function response() {
@@ -65,6 +69,43 @@ describe('company tenant context', () => {
     expect(query.getFilter()).toMatchObject({ companyId: companyA, skuNumber: 'SHARED-1' });
   });
 
+  test('warehouse roles can read company-wide catalog while stock records stay assignment-scoped', async () => {
+    const context = {
+      id: userA, role: 'staff', companyId: companyA, warehouseScoped: true,
+      allowedWarehouseIds: [warehouse1]
+    };
+    const catalogQuery = ItemModel.find({ companyId: companyB });
+    await applyFindScope(ItemModel, catalogQuery, context);
+    expect(catalogQuery.getFilter()).toMatchObject({ companyId: companyA });
+    expect(catalogQuery.getFilter().warehouseId).toBeUndefined();
+
+    const stockQuery = ProductModel.find({ companyId: companyB, warehouseId: { $ne: warehouse1 } });
+    await applyFindScope(ProductModel, stockQuery, context);
+    expect(stockQuery.getFilter()).toMatchObject({ companyId: companyA, warehouseId: { $in: [warehouse1] } });
+
+    const palletQuery = PalletModel.find({ companyId: companyB, warehouseId: { $ne: warehouse1 } });
+    await applyFindScope(PalletModel, palletQuery, context);
+    expect(palletQuery.getFilter()).toMatchObject({ companyId: companyA, warehouseId: { $in: [warehouse1] } });
+
+    const orderQuery = OrderModel.find({ companyId: companyB, warehouseId: { $ne: warehouse1 } });
+    await applyFindScope(OrderModel, orderQuery, context);
+    expect(orderQuery.getFilter()).toMatchObject({ companyId: companyA, warehouseId: { $in: [warehouse1] } });
+  });
+
+  test('customer and shipment queries stay within company and assigned warehouse scope', async () => {
+    const context = {
+      id: userA, role: 'warehouse_staff', companyId: companyA, warehouseScoped: true,
+      allowedWarehouseIds: [warehouse1]
+    };
+    const customers = CustomerModel.find({ companyId: companyB });
+    await applyFindScope(CustomerModel, customers, context);
+    expect(customers.getFilter()).toMatchObject({ companyId: companyA });
+
+    const shipments = ShipmentModel.find({ companyId: companyB, warehouseId: { $ne: warehouse1 } });
+    await applyFindScope(ShipmentModel, shipments, context);
+    expect(shipments.getFilter()).toMatchObject({ companyId: companyA, warehouseId: { $in: [warehouse1] } });
+  });
+
   test('Mongoose warehouse and location queries constrain warehouse managers', async () => {
     const warehouseQuery = WarehouseModel.find({ _id: { $ne: warehouse1 } });
     await applyFindScope(WarehouseModel, warehouseQuery, {
@@ -101,10 +142,30 @@ describe('company tenant context', () => {
     expect(noAssignments.warehouseId.$in).toEqual([]);
   });
 
+  test('warehouse list and ID queries are restricted to assigned warehouse IDs', async () => {
+    const context = {
+      id: userA, companyId: companyA, role: 'warehouse_manager', warehouseScoped: true,
+      allowedWarehouseIds: [warehouse1]
+    };
+    const listQuery = WarehouseModel.find({});
+    await applyFindScope(WarehouseModel, listQuery, context);
+    expect(listQuery.getFilter()).toMatchObject({ companyId: companyA, _id: { $in: [warehouse1] } });
+
+    const selectedQuery = WarehouseModel.find({ _id: warehouse1 });
+    await applyFindScope(WarehouseModel, selectedQuery, context);
+    expect(selectedQuery.getFilter()).toMatchObject({ companyId: companyA, _id: { $in: [warehouse1] } });
+  });
+
   test('new records cannot forge their company or owner', () => {
     const record = { ownerId: userB, companyId: companyB };
     assignTenantFields(record, { id: userA, role: 'staff', companyId: companyA }, { isNew: true, schema: ItemModel.schema });
     expect(record).toMatchObject({ ownerId: userA, companyId: companyA });
+  });
+
+  test('legacy records cannot be created under a caller-supplied company', () => {
+    const record = { ownerId: userB, companyId: companyB };
+    assignTenantFields(record, { id: userA, legacyOwnerId: userA, role: 'staff' }, { isNew: true, schema: ItemModel.schema });
+    expect(record).toMatchObject({ ownerId: userA, companyId: null });
   });
 
   test('warehouse writes reject IDs outside the membership assignment', () => {
@@ -116,7 +177,14 @@ describe('company tenant context', () => {
   });
 
   test('legacy routes retain per-owner scope until migration', () => {
-    expect(tenantFilter({ id: userA, legacyOwnerId: userA, role: 'staff' })).toEqual({ ownerId: userA });
+    expect(tenantFilter({ id: userA, legacyOwnerId: userA, role: 'staff' })).toEqual({ ownerId: userA, companyId: null });
+  });
+
+  test('legacy owner context cannot read rows already scoped to any company', () => {
+    const query = ItemModel.find({ companyId: companyB });
+    return applyFindScope(ItemModel, query, { id: userA, legacyOwnerId: userA, role: 'staff' }).then(() => {
+      expect(query.getFilter()).toMatchObject({ ownerId: userA, companyId: null });
+    });
   });
 
   test('rejects an attempted switch to a company without active membership', async () => {
@@ -185,6 +253,20 @@ describe('company tenant context', () => {
     expect(res.statusCode).toBe(403);
     expect(res.body.code).toBe('COMPANY_UNAVAILABLE');
     expect(next).not.toHaveBeenCalled();
+  });
+
+  test('blocks operational context for pending or deactivated companies by default', async () => {
+    for (const status of ['pending', 'deactivated']) {
+      CompanyMembership.find.mockReturnValue(membershipQuery([{ _id: '64b000000000000000000040', companyId: new mongoose.Types.ObjectId(companyA), role: 'company_admin', status: 'active', assignedWarehouseIds: [] }]));
+      Company.findById.mockReturnValue({ select: () => ({ lean: async () => ({ _id: companyA, status }) }) });
+      const req = { user: user(userA), auth: { id: userA, role: 'staff' }, get: () => companyA };
+      const res = response();
+      const next = jest.fn();
+      await tenantContext()(req, res, next);
+      expect(res.statusCode).toBe(403);
+      expect(next).not.toHaveBeenCalled();
+      expect(res.body.code).toBe(status === 'pending' ? 'COMPANY_PENDING' : 'COMPANY_UNAVAILABLE');
+    }
   });
 
   test('company and membership schemas enforce required fields and roles', async () => {

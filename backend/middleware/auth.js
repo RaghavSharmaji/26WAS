@@ -1,6 +1,7 @@
 const jwt = require('jsonwebtoken');
 const User = require('../model/User');
 const { runWithAuth } = require('./requestContext');
+const { normalizeRole } = require('./roleCompatibility');
 
 function unauthorized(res, message) {
   return res.status(401).json({ success: false, message });
@@ -25,7 +26,7 @@ async function requireAuth(req, res, next) {
       return res.status(403).json({ success: false, code: 'PASSWORD_CHANGE_REQUIRED', message: 'Change your temporary password before using this account.' });
     }
     req.user = user;
-    req.auth = { id: String(user._id), role: user.role || 'staff' };
+    req.auth = { id: String(user._id), role: normalizeRole(user.role || 'staff') };
     return runWithAuth(req.tenantAuth || req.auth, next);
   } catch (err) {
     return unauthorized(res, 'Invalid authentication token');
@@ -35,7 +36,8 @@ async function requireAuth(req, res, next) {
 function requireRole(...roles) {
   return (req, res, next) => {
     if (!req.auth) return unauthorized(res, 'Authentication required');
-    if (!roles.includes(req.auth.role)) {
+    const acceptedRoles = roles.map(normalizeRole);
+    if (!acceptedRoles.includes(normalizeRole(req.auth.role))) {
       return res.status(403).json({ success: false, message: 'Insufficient permissions' });
     }
     return next();

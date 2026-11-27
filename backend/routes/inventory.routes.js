@@ -6,6 +6,7 @@ const asyncHandler = require('../middleware/asyncHandler');
 const validators = require('../validators/records');
 const inventoryService = require('../services/inventoryService');
 const { resolveWarehouse, resolveLocation } = require('../services/tenantService');
+const { availableQuantityExpression } = require('../services/inventoryBalance');
 
 const router = express.Router();
 router.use(auth);
@@ -15,7 +16,9 @@ router.get('/', asyncHandler(async (req, res) => {
     {
       $group: {
         _id: '$skuNumber',
-        availableQuantity: { $sum: { $ifNull: ['$contAvailable', '$cont'] } },
+        availableQuantity: { $sum: availableQuantityExpression() },
+        onHandQuantity: { $sum: '$cont' },
+        quarantinedQuantity: { $sum: { $ifNull: ['$contQuarantined', 0] } },
         palletCount: { $sum: 1 },
         locations: { $addToSet: '$location' }
       }
@@ -33,9 +36,10 @@ router.get('/', asyncHandler(async (req, res) => {
 
 router.post('/stock-in', asyncHandler(async (req, res) => {
   const body = validators.inventory(req.body || {}, 'stock-in');
+  const requestKey = req.get('Idempotency-Key');
   let result;
   if (body.palletId) {
-    result = await inventoryService.changePalletStock({ ...body, type: 'stock-in', userId: req.auth.id });
+    result = await inventoryService.receivePalletStock({ ...body, requestKey, userId: req.auth.id });
     return res.json({ success: true, data: result });
   }
   if (req.tenant?.companyId) {
@@ -43,8 +47,8 @@ router.post('/stock-in', asyncHandler(async (req, res) => {
     body.warehouseId = String(warehouse._id);
     await resolveLocation(req, body.location, body.warehouseId);
   }
-  result = await inventoryService.receiveNewPallet({ ...body, userId: req.auth.id });
-  return res.status(201).json({ success: true, data: result });
+  result = await inventoryService.receiveNewPallet({ ...body, requestKey, userId: req.auth.id });
+  return res.status(result.idempotentReplay ? 200 : 201).json({ success: true, data: result });
 }));
 
 router.post('/stock-out', asyncHandler(async (req, res) => {
@@ -53,9 +57,18 @@ router.post('/stock-out', asyncHandler(async (req, res) => {
   return res.json({ success: true, data });
 }));
 
+router.post('/stock-out/batch', asyncHandler(async (req, res) => {
+  const body = validators.inventoryBatchDeduction(req.body || {});
+  const requestKey = req.get('Idempotency-Key');
+  const data = await inventoryService.deductPalletStockBatch({
+    ...body, requestKey, userId: req.auth.id
+  });
+  return res.json({ success: true, data });
+}));
+
 router.post('/adjust', asyncHandler(async (req, res) => {
   const body = validators.inventory(req.body || {}, 'adjustment');
-  const data = await inventoryService.changePalletStock({ ...body, type: 'adjustment', userId: req.auth.id });
+  const data = await inventoryService.adjustPalletStock({ ...body, requestKey: req.get('Idempotency-Key'), userId: req.auth.id });
   return res.json({ success: true, data });
 }));
 

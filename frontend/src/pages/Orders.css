@@ -283,6 +283,121 @@
   cursor: pointer;
 }
 
+.outbound-form {
+  padding: 22px;
+  margin-bottom: 22px;
+}
+
+.outbound-form h3,
+.outbound-action h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 16px;
+  color: #263348;
+}
+
+.outbound-form label,
+.outbound-action label {
+  display: grid;
+  gap: 7px;
+  margin: 12px 0;
+  color: #687589;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.outbound-form input,
+.outbound-form select,
+.outbound-form textarea,
+.outbound-action input,
+.outbound-action select,
+.outbound-action textarea,
+.orders-filters select {
+  width: 100%;
+  min-height: 40px;
+  padding: 9px 11px;
+  border: 1px solid #dfe5ed;
+  border-radius: 7px;
+  outline-color: #3978e8;
+  background: #fff;
+  color: #263348;
+}
+
+.outbound-form textarea,
+.outbound-action textarea {
+  min-height: 76px;
+  resize: vertical;
+}
+
+.outbound-form-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.outbound-lines {
+  display: grid;
+  gap: 10px;
+  margin: 12px 0;
+}
+
+.outbound-line {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) 110px auto;
+  gap: 10px;
+}
+
+.outbound-notes {
+  max-width: 100%;
+}
+
+.outbound-primary,
+.outbound-action button {
+  min-height: 39px;
+  padding: 9px 15px;
+  border: 0;
+  border-radius: 7px;
+  background: #3978e8;
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.outbound-primary:disabled,
+.outbound-action button:disabled {
+  opacity: .55;
+  cursor: not-allowed;
+}
+
+.outbound-two-column {
+  display: grid;
+  grid-template-columns: minmax(260px, 360px) minmax(0, 1fr);
+  gap: 20px;
+}
+
+.outbound-action {
+  margin-top: 17px;
+  padding: 15px;
+  border: 1px solid #edf0f5;
+  border-radius: 9px;
+}
+
+.outbound-detail {
+  max-width: 760px;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+.data-success {
+  padding: 11px 14px;
+  margin-bottom: 16px;
+  border: 1px solid #bde8d0;
+  border-radius: 8px;
+  background: #eaf8f0;
+  color: #217a4f;
+}
+
 @media (max-width: 900px) {
   .orders-stats {
     grid-template-columns: repeat(2, 1fr);
@@ -310,5 +425,18 @@
 
   .orders-management {
     padding: 14px;
+  }
+
+  .outbound-form-grid,
+  .outbound-two-column {
+    grid-template-columns: 1fr;
+  }
+
+  .outbound-line {
+    grid-template-columns: minmax(0, 1fr) 84px;
+  }
+
+  .outbound-line button {
+    grid-column: 1 / -1;
   }
 }

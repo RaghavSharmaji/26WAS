@@ -1,6 +1,7 @@
 const bcrypt = require('bcryptjs');
 const validator = require('validator');
 const User = require('../model/User');
+const { isSuperAdminRole } = require('../middleware/roleCompatibility');
 
 async function ensureSuperAdmin() {
   const name = (process.env.SUPER_ADMIN_NAME || '').trim();
@@ -17,7 +18,7 @@ async function ensureSuperAdmin() {
 
   const existing = await User.findOne({ email }).select('+password');
   if (existing) {
-    if (existing.role !== 'superadmin') {
+    if (!isSuperAdminRole(existing.role)) {
       throw new Error('SUPER_ADMIN_EMAIL already belongs to a non-super-admin account. Choose a new email or use the documented explicit promotion procedure.');
     }
     if (existing.accountStatus === 'deleted') {
@@ -26,7 +27,7 @@ async function ensureSuperAdmin() {
     return { created: false, email };
   }
 
-  const otherSuperAdmin = await User.findOne({ role: 'superadmin' }).select('_id email').lean();
+  const otherSuperAdmin = await User.findOne({ role: { $in: ['super_admin', 'superadmin'] } }).select('_id email').lean();
   if (otherSuperAdmin) {
     throw new Error('A different Super Admin account already exists. Update SUPER_ADMIN_EMAIL to that account or use the explicit Super Admin credential update procedure.');
   }
@@ -35,8 +36,8 @@ async function ensureSuperAdmin() {
     name,
     email,
     password: await bcrypt.hash(password, 12),
-    role: 'superadmin',
-    clearance: ['superadmin'],
+    role: 'super_admin',
+    clearance: ['super_admin'],
     accountStatus: 'active',
     status: 'on'
   });

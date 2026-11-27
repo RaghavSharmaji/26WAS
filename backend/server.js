@@ -6,6 +6,9 @@ mongoose.set('strictQuery', false);
 const cors = require('cors');
 const auth = require('./middleware/auth');
 const tenantContext = require('./middleware/tenantContext');
+const { authorizeOperationalRequest } = require('./middleware/permissions');
+const migrationWriteFreeze = require('./middleware/migrationWriteFreeze');
+const { acquireApplicationWriteLease, releaseApplicationWriteLease } = migrationWriteFreeze;
 const errorHandler = require('./middleware/errorHandler');
 
 const app = express();
@@ -31,6 +34,10 @@ const reportRoutes = require('./routes/report.routes');
 const adminRoutes = require('./routes/admin.routes');
 const ensureSuperAdmin = require('./scripts/ensureSuperAdmin');
 const companyRoutes = require('./routes/company.routes');
+const purchaseOrderRoutes = require('./routes/purchaseOrder.routes');
+const grnRoutes = require('./routes/grn.routes');
+const customerRoutes = require('./routes/customer.routes');
+const shipmentRoutes = require('./routes/shipment.routes');
 
 const allowedOrigins = (process.env.CORS_ORIGINS || 'http://localhost:5173,http://127.0.0.1:5173')
   .split(',').map(origin => origin.trim()).filter(Boolean);
@@ -41,6 +48,10 @@ app.use(cors({
   }
 }));
 app.use(express.json({ limit: '1mb' }));
+// Every HTTP mutation shares a MongoDB-backed lease with the migration runner.
+// This covers company membership changes as well as warehouse operations and
+// keeps independently deployed application instances coordinated.
+app.use(migrationWriteFreeze);
 
 app.get('/api/health', (req, res) => {
   const connected = mongoose.connection.readyState === 1;
@@ -52,13 +63,13 @@ app.get('/api/health', (req, res) => {
 
 app.use('/api/auth', authRoutes);
 app.use('/api/companies', companyRoutes);
-app.use('/api/admin', auth, auth.requireRole('superadmin'), adminRoutes);
+app.use('/api/admin', auth, auth.requireRole('super_admin'), adminRoutes);
 // All operational route families resolve tenant membership before controller execution.
 app.use([
   '/api/categories', '/api/suppliers', '/api/warehouses', '/api/locations', '/api/products', '/api/items',
-  '/api/inventory', '/api/pallets', '/api/reports', '/api/location', '/api/item', '/api/pallet',
-  '/api/receiving', '/api/order', '/api/ticket', '/api/picker', '/webs/item'
-], auth, tenantContext());
+  '/api/inventory', '/api/pallets', '/api/reports', '/api/purchase-orders', '/api/grns', '/api/location', '/api/item', '/api/pallet',
+  '/api/receiving', '/api/order', '/api/customers', '/api/shipments', '/api/ticket', '/api/picker', '/webs/item'
+], auth, tenantContext({ blockPending: true }), authorizeOperationalRequest());
 app.use('/api/categories', categoryRoutes);
 app.use('/api/suppliers', supplierRoutes);
 app.use('/api/warehouses', warehouseRoutes);
@@ -68,6 +79,10 @@ app.use('/api/items', productRoutes);
 app.use('/api/inventory', inventoryRoutes);
 app.use('/api/pallets', palletCrudRoutes);
 app.use('/api/reports', reportRoutes);
+app.use('/api/purchase-orders', purchaseOrderRoutes);
+app.use('/api/grns', grnRoutes);
+app.use('/api/customers', customerRoutes);
+app.use('/api/shipments', shipmentRoutes);
 
 app.use('/api/location', auth, locationRoutes);
 app.use('/api/item', auth, itemRoutes);
@@ -96,7 +111,13 @@ async function start() {
     throw new Error('SECRET_OR_KEY is required. Set a private random value in backend/.env.');
   }
   await mongoose.connect(mongoUri);
-  await ensureSuperAdmin();
+  const startupLease = await acquireApplicationWriteLease(mongoose.connection.db);
+  if (!startupLease) throw new Error('Startup is blocked because a company migration currently holds the application write freeze. Retry after maintenance completes.');
+  try {
+    await ensureSuperAdmin();
+  } finally {
+    await releaseApplicationWriteLease(mongoose.connection.db, startupLease.lease);
+  }
   console.log('MongoDB connected');
   const server = await new Promise((resolve, reject) => {
     const listener = app.listen(port, () => resolve(listener));

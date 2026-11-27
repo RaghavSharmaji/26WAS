@@ -9,7 +9,9 @@ const router = express.Router();
 const Item = require('../model/Item');
 const Pallet = require('../model/Pallets');
 const Location = require('../model/Location');
-const { resolveWarehouse, resolveLocation } = require('../services/tenantService');
+const validators = require('../validators/records');
+const inventoryService = require('../services/inventoryService');
+const { resolveWarehouse, resolveLocation, movePallet } = require('../services/tenantService');
 
 function helperNotGoodSize(location, pallet, maxLocation) {
   let result = false;
@@ -42,51 +44,18 @@ router.post('/status', async (req, res) => {
 });
 
 router.post('/create', async (req, res) => {
-  const newPallet = new Pallet({ ...req.body });
-  const { skuNumber, cont } = newPallet;
-  newPallet.contAvailable = cont;
   try {
-    const warehouse = await resolveWarehouse(req, req.body.warehouseId || (req.tenant && req.tenant.activeWarehouseId));
-    if (warehouse) newPallet.warehouseId = warehouse._id;
-    const quantity = Number(cont);
-    if (!Number.isInteger(quantity) || quantity <= 0) {
-      return res.status(400).json({ success: false, message: 'cont must be a positive whole number' });
+    const body = validators.inventory({ ...(req.body || {}), quantity: req.body?.quantity ?? req.body?.cont }, 'stock-in');
+    if (req.tenant?.companyId) {
+      const warehouse = await resolveWarehouse(req, body.warehouseId || req.tenant.activeWarehouseId);
+      body.warehouseId = String(warehouse._id);
+      await resolveLocation(req, body.location, body.warehouseId);
     }
-    if (!req.body.reason || !String(req.body.reason).trim()) {
-      return res.status(400).json({ success: false, message: 'reason is required' });
-    }
-    const itemFond = await Item.findOne({
-      skuNumber: skuNumber
-    });
-    if (!itemFond) {
-      res.json({
-        success: false,
-        message: `item not fond (${skuNumber})`,
-        create: true
-      });
-    } else {
-      const locations = await Location.find({
-        skuNumber: skuNumber
-      });
-      newPallet.item = itemFond._id;
-      newPallet.size = itemFond.size * newPallet.cont;
-      newPallet.ounce = itemFond.ounce * newPallet.cont;
-      newPallet.department = itemFond.department;
-      newPallet.status = 'received';
-      newPallet.movementLog.push({
-        type: 'stock-in', quantity, delta: quantity, stockBefore: 0, stockAfter: quantity,
-        reason: String(req.body.reason).trim(), responsibleUser: req.auth.id
-      });
-      await newPallet.save();
-      res.json({
-        success: true,
-        message: 'pallet create',
-        newPallet,
-        locations
-      });
-    }
+    if (!body.skuNumber) return res.status(400).json({ success: false, message: 'skuNumber is required to create a pallet' });
+    const result = await inventoryService.receiveNewPallet({ ...body, requestKey: req.get('Idempotency-Key'), userId: req.auth.id });
+    const locations = await Location.find({ skuNumber: body.skuNumber });
+    return res.status(result.idempotentReplay ? 200 : 201).json({ success: true, message: 'pallet create', newPallet: result.pallet, locations, idempotentReplay: result.idempotentReplay });
   } catch (err) {
-    console.error(err);
     res.status(err.status || 500).json({ success: false, message: err.message || 'Could not create pallet' });
   }
 });
@@ -95,70 +64,9 @@ router.post('/send', async (req, res) => {
   const { id, location } = req.body;
   if (!location) return res.json({ success: false, message: 'need location ' });
   try {
-    const pallet = await Pallet.findOne({
-      _id: id
-    });
-    if (!pallet) {
-      res.json({
-        success: false,
-        message: `pallet not fond (${id})`
-      });
-    } else if (pallet.status === 'received') {
-      if (req.tenant && req.tenant.companyId) {
-        await resolveWarehouse(req, pallet.warehouseId);
-        await resolveLocation(req, location, pallet.warehouseId);
-      }
-      const locationFond = await Location.findOne({
-        fullName: location,
-        ...(pallet.warehouseId ? { warehouse: pallet.warehouseId } : {})
-      });
-
-      if (!locationFond) return res.status(404).json({ success: false, message: 'Location not found in the pallet warehouse' });
-
-      if (
-        locationFond.skuNumber === pallet.skuNumber ||
-        // locationFond.skuNumber === undefined ||
-        locationFond.skuNumber === null
-      ) {
-        if (
-          helperNotGoodSize(
-            locationFond.size,
-            pallet.size,
-            locationFond.maxSize
-          )
-        ) {
-          return res.json({ success: false, message: `err size` });
-        }
-        locationFond.skuNumber = pallet.skuNumber;
-        locationFond.palletId.push(pallet._id);
-        locationFond.department = pallet.department;
-        locationFond.status = 'occupied';
-        locationFond.size += pallet.size;
-        pallet.location = locationFond.fullName;
-        pallet.status = 'r/p';
-        pallet.date = Date.now();
-        pallet.save();
-        locationFond.save();
-        res.json({
-          success: true,
-          message: `pallets to be stored`,
-          pallet,
-          locationFond
-        });
-      } else {
-        res.json({
-          success: false,
-          message: `mix sku not permeated (${pallet.skuNumber} - ${locationFond.skuNumber})`
-        });
-      }
-    } else {
-      res.json({
-        success: false,
-        message: `pallet is  not received (${pallet.status})`
-      });
-    }
+    const result = await movePallet(req, id, location, { requireReceived: true });
+    return res.json({ success: true, message: 'pallet stored', pallet: result.pallet, locationFond: result.location });
   } catch (error) {
-    console.log('error', error);
     res.status(error.status || 500).json({ success: false, message: error.message || 'Could not store pallet' });
   }
 });
@@ -167,52 +75,8 @@ router.post('/dynamicsend', async (req, res) => {
   const { id } = req.body;
   if (!id) return res.json({ success: false, message: 'need id ' });
   try {
-    const pallet = await Pallet.findOne({
-      _id: id
-    });
-    if (!pallet) {
-      res.json({
-        success: false,
-        message: `pallet not fond (${id})`
-      });
-    } else if (pallet.status === 'received') {
-      if (req.tenant && req.tenant.companyId) await resolveWarehouse(req, pallet.warehouseId);
-      const locationFondArray = await Location.find({
-        status: 'empty',
-        maxSize: { $gte: pallet.size },
-        ...(pallet.warehouseId ? { warehouse: pallet.warehouseId } : {})
-      });
-      const locationFond = locationFondArray[0];
-
-      if (!locationFond) return res.status(404).json({ success: false, message: 'No suitable empty location in the pallet warehouse' });
-
-      if (
-        helperNotGoodSize(locationFond.size, pallet.size, locationFond.maxSize)
-      ) {
-        return res.json({ success: false, message: `err size` });
-      }
-      locationFond.skuNumber = pallet.skuNumber;
-      locationFond.palletId.push(pallet._id);
-      locationFond.department = pallet.department;
-      locationFond.size += pallet.size;
-      locationFond.status = 'occupied';
-      pallet.location = locationFond.fullName;
-      pallet.status = 'r/p';
-      pallet.date = Date.now();
-      pallet.save();
-      locationFond.save();
-      res.json({
-        success: true,
-        message: `pallets to be stored`,
-        pallet,
-        locationFond
-      });
-    } else {
-      res.json({
-        success: false,
-        message: `pallet is  not received (${pallet.status})`
-      });
-    }
+    const result = await movePallet(req, id, null, { requireReceived: true, findAvailable: true });
+    return res.json({ success: true, message: 'pallet stored', pallet: result.pallet, locationFond: result.location });
   } catch (error) {
     console.log('error', error);
     res.status(error.status || 500).json({ success: false, message: error.message || 'Could not find a putaway location' });

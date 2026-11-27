@@ -3,6 +3,7 @@ const Company = require('../model/Company');
 const CompanyMembership = require('../model/CompanyMembership');
 const Warehouse = require('../model/Warehouse');
 const { runWithAuth } = require('./requestContext');
+const { isSuperAdminRole } = require('./roleCompatibility');
 
 function deny(res, status, code, message) {
   return res.status(status).json({ success: false, code, message });
@@ -11,13 +12,13 @@ function deny(res, status, code, message) {
 function tenantContext(options = {}) {
   return async function resolveTenantContext(req, res, next) {
     if (!req.auth || !req.user) return deny(res, 401, 'AUTHENTICATION_REQUIRED', 'Authentication required');
-    if (req.auth.role === 'superadmin') {
+    if (isSuperAdminRole(req.auth.role)) {
       return deny(res, 403, 'PLATFORM_ROUTE_REQUIRED', 'Platform administrators must use platform administration endpoints');
     }
 
     try {
       const allMemberships = await CompanyMembership.find({ userId: req.user._id })
-        .select('companyId role assignedWarehouseIds status').lean();
+        .select('companyId role assignedWarehouseIds permissionOverrides status revision').lean();
       const memberships = allMemberships.filter(row => row.status === 'active');
       const requestedCompanyId = req.get('x-company-id');
 
@@ -40,11 +41,10 @@ function tenantContext(options = {}) {
       if (!membership) return deny(res, 403, 'COMPANY_MEMBERSHIP_REQUIRED', 'You are not an active member of that company');
 
       const company = await Company.findById(membership.companyId).select('name slug status').lean();
-      if (!company || ['suspended', 'deactivated'].includes(company.status)) {
-        return deny(res, 403, 'COMPANY_UNAVAILABLE', 'This company is suspended or unavailable');
-      }
-      if (company.status === 'pending' && options.blockPending) {
-        return deny(res, 403, 'COMPANY_PENDING', 'This company is not active yet');
+      if (!company || company.status !== 'active') {
+        const pending = company && company.status === 'pending';
+        return deny(res, 403, pending ? 'COMPANY_PENDING' : 'COMPANY_UNAVAILABLE',
+          pending ? 'This company is not active yet' : 'This company is suspended, deactivated, or unavailable');
       }
 
       const warehouseIds = (membership.assignedWarehouseIds || []).map(String);
@@ -70,7 +70,9 @@ function tenantContext(options = {}) {
         companySlug: company.slug,
         companyStatus: company.status,
         membershipId: String(membership._id),
+        membershipRevision: Number.isSafeInteger(membership.revision) && membership.revision >= 0 ? membership.revision : 0,
         membershipRole: membership.role,
+        permissionOverrides: (membership.permissionOverrides || []).map(row => ({ permission: row.permission, effect: row.effect })),
         allowedWarehouseIds: warehouseIds,
         warehouseScoped,
         activeWarehouseId
@@ -87,7 +89,7 @@ function tenantContext(options = {}) {
 }
 
 function requireCompanyAdmin(req, res, next) {
-  if (req.auth && req.auth.role === 'superadmin') return next();
+  if (req.auth && isSuperAdminRole(req.auth.role)) return next();
   if (!req.tenant || req.tenant.membershipRole !== 'company_admin') {
     return deny(res, 403, 'COMPANY_ADMIN_REQUIRED', 'Company Admin permission is required');
   }

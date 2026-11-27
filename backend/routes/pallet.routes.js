@@ -8,8 +8,11 @@ const express = require('express');
 const router = express.Router();
 const Item = require('../model/Item');
 const Pallet = require('../model/Pallets');
+const validators = require('../validators/records');
+const inventoryService = require('../services/inventoryService');
 const { requireCompanyRole } = require('../middleware/companyAuthorization');
-const { resolveWarehouse, resolveLocation } = require('../services/tenantService');
+const { requireCompanyPermission } = require('../middleware/permissions');
+const { resolveWarehouse, resolveLocation, movePallet } = require('../services/tenantService');
 const Location = require('../model/Location');
 
 // function helperUniqItem(arr, idParam) {
@@ -57,9 +60,9 @@ router.get('/', async (req, res) => {
     });
   } catch (err) {
     console.error(err);
-    res.json({
+    res.status(err.status || 500).json({
       success: false,
-      err: err
+      message: err.message || 'Could not update pallet'
     });
   }
 });
@@ -121,56 +124,19 @@ router.get('/id/:id', async (req, res) => {
 });
 
 router.post('/create', async (req, res) => {
-  const newPallet = new Pallet({ ...req.body });
-  const { skuNumber } = newPallet;
   try {
+    const body = validators.inventory({ ...(req.body || {}), quantity: req.body?.quantity ?? req.body?.cont }, 'stock-in');
     if (req.tenant?.companyId) {
-      const warehouse = await resolveWarehouse(req, req.body.warehouseId || req.tenant.activeWarehouseId);
-      newPallet.warehouseId = warehouse._id;
-      await resolveLocation(req, req.body.location, String(warehouse._id));
+      const warehouse = await resolveWarehouse(req, body.warehouseId || req.tenant.activeWarehouseId);
+      body.warehouseId = String(warehouse._id);
+      await resolveLocation(req, body.location, body.warehouseId);
     }
-    const itemFond = await Item.findOne({
-      skuNumber: skuNumber
-    });
-    if (!itemFond) {
-      res.json({
-        success: false,
-        message: `item not fond (${skuNumber})`
-      });
-    } else {
-      const quantity = Number(newPallet.cont);
-      if (!Number.isInteger(quantity) || quantity <= 0) {
-        return res.status(400).json({ success: false, message: 'cont must be a positive whole number' });
-      }
-      if (!req.body.reason || !String(req.body.reason).trim()) {
-        return res.status(400).json({ success: false, message: 'reason is required' });
-      }
-      const locations = await Location.find({
-        skuNumber: skuNumber
-      });
-      newPallet.item = itemFond._id;
-      newPallet.size = itemFond.size * newPallet.cont;
-      newPallet.ounce = itemFond.ounce * newPallet.cont;
-      newPallet.status = 'receiving';
-      newPallet.contAvailable = quantity;
-      newPallet.movementLog.push({
-        type: 'stock-in', quantity, delta: quantity, stockBefore: 0, stockAfter: quantity,
-        reason: String(req.body.reason).trim(), responsibleUser: req.auth.id
-      });
-      await newPallet.save();
-      res.json({
-        success: true,
-        message: 'pallet create',
-        item: newPallet,
-        locations
-      });
-    }
+    if (!body.skuNumber) return res.status(400).json({ success: false, message: 'skuNumber is required to create a pallet' });
+    const result = await inventoryService.receiveNewPallet({ ...body, requestKey: req.get('Idempotency-Key'), userId: req.auth.id });
+    const locations = await Location.find({ skuNumber: body.skuNumber });
+    return res.status(result.idempotentReplay ? 200 : 201).json({ success: true, message: 'pallet create', item: result.pallet, locations, idempotentReplay: result.idempotentReplay });
   } catch (err) {
-    console.error(err);
-    res.json({
-      success: false,
-      err: err
-    });
+    return res.status(err.status || 500).json({ success: false, message: err.message || 'Could not create pallet' });
   }
 });
 
@@ -178,6 +144,19 @@ router.post('/create', async (req, res) => {
 router.post('/update', async (req, res) => {
   const { id, status, location } = req.body;
   try {
+    if (status !== undefined) {
+      let permitted = false;
+      requireCompanyPermission('inventory.update')(req, res, () => { permitted = true; });
+      if (!permitted) return;
+      if (!Pallet.STATUS_VALUES.includes(status)) {
+        return res.status(400).json({ success: false, message: 'Invalid pallet status' });
+      }
+    }
+    if (location !== undefined) {
+      if (typeof location !== 'string' || !location.trim()) return res.status(400).json({ success: false, message: 'A valid destination location is required' });
+      const moved = await movePallet(req, id, location.trim(), { status });
+      return res.json({ success: true, message: 'pallet Updated', pallet: moved.pallet, locationFond: moved.location });
+    }
     const pallet = await Pallet.findOne({
       _id: id
     });
@@ -188,82 +167,9 @@ router.post('/update', async (req, res) => {
         message: `pallet not fond (${id})`
       });
     } else {
-      if (status) pallet.status = status;
-      if (location) {
-        const locationFond = await Location.findOne({
-          fullName: location
-        });
-        if (!locationFond) {
-          return res.json({
-            success: false,
-            message: `location nat valid ${location}`
-          });
-        }
-
-        if (
-          locationFond.skuNumber === pallet.skuNumber ||
-          locationFond.skuNumber === undefined ||
-          locationFond.skuNumber === null
-        ) {
-          locationFond.skuNumber = pallet.skuNumber;
-          if (pallet.location !== locationFond.fullName) {
-            if (pallet.location) {
-              const oldLocation = await Location.findOne({
-                fullName: pallet.location
-              });
-              if (oldLocation) {
-                oldLocation.size -= pallet.size;
-                const newPalletArry = oldLocation.palletId.filter(
-                  item => item === pallet._id
-                );
-                oldLocation.palletId = newPalletArry;
-                if (oldLocation.size <= 0) {
-                  oldLocation.skuNumber = null;
-                }
-                await oldLocation.save();
-              }
-            }
-            locationFond.palletId.push(pallet._id);
-            if (
-              helperNotGoodSize(
-                locationFond.size,
-                pallet.size,
-                locationFond.maxSize
-              )
-            ) {
-              return res.json({
-                success: false,
-                message: `err size`
-              });
-              // eslint-disable-next-line no-else-return
-            } else {
-              // eslint-disable-next-line operator-assignment
-              locationFond.size = locationFond.size + pallet.size;
-              pallet.location = location; // ojo
-            }
-          }
-          await locationFond.save();
-          await pallet.save();
-          res.json({
-            success: true,
-            message: `pallet Updated `,
-            pallet: pallet,
-            locationFond
-          });
-        } else {
-          res.json({
-            success: false,
-            message: `mix sku not permeated (${pallet.skuNumber} - ${locationFond.skuNumber})`
-          });
-        }
-      } else {
-        await pallet.save();
-        res.json({
-          success: true,
-          message: `pallet Updated `,
-          pallet: pallet
-        });
-      }
+      if (status !== undefined) pallet.status = status;
+      await pallet.save();
+      res.json({ success: true, message: 'pallet Updated', pallet });
     }
   } catch (err) {
     console.error(err);

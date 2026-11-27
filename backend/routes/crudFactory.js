@@ -4,7 +4,7 @@ const auth = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
 const { requireCompanyRole, requireTenantCompanyRole } = require('../middleware/companyAuthorization');
 
-function createCrudRouter({ Model, validate, beforeSave, beforeDelete, writeRoles }) {
+function createCrudRouter({ Model, validate, beforeCreate, beforeSave, beforeUpdate, beforeDelete, writeRoles }) {
   const router = express.Router();
   router.use(auth);
 
@@ -28,6 +28,7 @@ function createCrudRouter({ Model, validate, beforeSave, beforeDelete, writeRole
 
   router.post('/', requireWriteRole, asyncHandler(async (req, res) => {
     const body = validate(req.body || {});
+    if (beforeCreate) await beforeCreate(body, req);
     if (beforeSave) await beforeSave(body);
     const record = await Model.create(body);
     return res.status(201).json({ success: true, data: record });
@@ -38,6 +39,11 @@ function createCrudRouter({ Model, validate, beforeSave, beforeDelete, writeRole
       return res.status(400).json({ success: false, message: 'Invalid record ID' });
     }
     const body = validate(req.body || {});
+    if (beforeUpdate) {
+      const current = await Model.findById(req.params.id);
+      if (!current) return res.status(404).json({ success: false, message: 'Record not found' });
+      await beforeUpdate(body, current, req);
+    }
     if (beforeSave) await beforeSave(body);
     const record = await Model.findByIdAndUpdate(req.params.id, body, {
       new: true,

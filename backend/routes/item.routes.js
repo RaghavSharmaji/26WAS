@@ -2,9 +2,12 @@
 /* eslint-disable no-undef */
 /* eslint-disable node/no-unsupported-features/es-syntax */
 const express = require('express');
+const mongoose = require('mongoose');
 
 const router = express.Router();
 const Item = require('../model/Item');
+const Category = require('../model/Category');
+const Supplier = require('../model/Supplier');
 const { requireCompanyRole } = require('../middleware/companyAuthorization');
 
 function escapeRegex(text) {
@@ -64,6 +67,17 @@ router.post('/create', async (req, res) => {
 
   const { skuNumber } = newItem;
   try {
+    if (newItem.category && !await Category.exists({ _id: newItem.category })) {
+      return res.status(404).json({ success: false, message: 'Category not found in this account' });
+    }
+    if (newItem.suppliers !== undefined) {
+      if (!Array.isArray(newItem.suppliers) || newItem.suppliers.some(id => !mongoose.Types.ObjectId.isValid(id))) {
+        return res.status(400).json({ success: false, message: 'suppliers must be an array of valid IDs' });
+      }
+      if (await Supplier.countDocuments({ _id: { $in: newItem.suppliers } }) !== newItem.suppliers.length) {
+        return res.status(404).json({ success: false, message: 'One or more suppliers were not found in this account' });
+      }
+    }
     const oldItem = await Item.findOne({ skuNumber: skuNumber });
     if (!oldItem) {
       await newItem.save();

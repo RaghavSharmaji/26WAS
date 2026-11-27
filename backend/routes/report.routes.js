@@ -5,6 +5,9 @@ const Warehouse = require('../model/Warehouse');
 const Pallet = require('../model/Pallets');
 const auth = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
+const { availableQuantityExpression } = require('../services/inventoryBalance');
+const GoodsReceipt = require('../model/GoodsReceipt');
+const { movementDateMatch, movementTotals, qualityTotals } = require('../services/movementReport');
 
 const router = express.Router();
 router.use(auth);
@@ -14,7 +17,7 @@ async function stockBySku() {
     {
       $group: {
         _id: '$skuNumber',
-        quantity: { $sum: { $ifNull: ['$contAvailable', '$cont'] } },
+        quantity: { $sum: availableQuantityExpression() },
         palletCount: { $sum: 1 }
       }
     }
@@ -36,23 +39,34 @@ router.get('/low-stock', asyncHandler(async (req, res) => {
 }));
 
 router.get('/summary', asyncHandler(async (req, res) => {
-  const [productCount, warehouseCount, locationCount, stock, movements, recentMovements] = await Promise.all([
+  const [productCount, warehouseCount, locationCount, stock, movementGroups, qualityRows, recentMovements] = await Promise.all([
     Item.countDocuments(),
     Warehouse.countDocuments(),
     Location.countDocuments(),
-    Pallet.aggregate([{ $group: { _id: null, quantity: { $sum: { $ifNull: ['$contAvailable', '$cont'] } } } }]),
+    Pallet.aggregate([{ $group: {
+      _id: null,
+      quantity: { $sum: availableQuantityExpression() },
+      onHandQuantity: { $sum: { $ifNull: ['$cont', 0] } },
+      quarantinedQuantity: { $sum: { $ifNull: ['$contQuarantined', 0] } }
+    } }]),
     Pallet.aggregate([
       { $unwind: '$movementLog' },
-      { $group: { _id: '$movementLog.type', movementCount: { $sum: 1 }, quantity: { $sum: '$movementLog.quantity' } } }
+      { $group: { _id: { type: '$movementLog.type', referenceType: '$movementLog.referenceType' }, movementCount: { $sum: 1 }, quantity: { $sum: '$movementLog.quantity' } } }
+    ]),
+    GoodsReceipt.aggregate([
+      { $unwind: '$lines' },
+      { $group: { _id: null, rejected: { $sum: '$lines.rejectedQuantity' }, damaged: { $sum: '$lines.damagedQuantity' }, incorrect: { $sum: '$lines.incorrectQuantity' } } }
     ]),
     Pallet.aggregate([
       { $unwind: '$movementLog' },
       { $sort: { 'movementLog.createdAt': -1 } },
       { $limit: 10 },
-      { $project: { palletId: '$_id', skuNumber: 1, type: '$movementLog.type', quantity: '$movementLog.quantity', reason: '$movementLog.reason', createdAt: '$movementLog.createdAt' } }
+      { $project: { palletId: '$_id', skuNumber: 1, type: '$movementLog.type', referenceType: '$movementLog.referenceType', quantity: '$movementLog.quantity', reason: '$movementLog.reason', createdAt: '$movementLog.createdAt' } }
     ])
   ]);
-  const byType = Object.fromEntries(movements.map(row => [row._id, { count: row.movementCount, quantity: row.quantity }]));
+  const totals = movementTotals(movementGroups.map(row => ({
+    type: row._id.type, referenceType: row._id.referenceType, count: row.movementCount, quantity: row.quantity
+  })));
   res.json({
     success: true,
     data: {
@@ -60,31 +74,38 @@ router.get('/summary', asyncHandler(async (req, res) => {
       warehouseCount,
       locationCount,
       totalAvailableQuantity: stock.length ? stock[0].quantity : 0,
-      stockIn: byType['stock-in'] || { count: 0, quantity: 0 },
-      stockOut: byType['stock-out'] || { count: 0, quantity: 0 },
-      adjustments: byType.adjustment || { count: 0, quantity: 0 },
+      totalOnHandQuantity: stock.length ? stock[0].onHandQuantity : 0,
+      totalQuarantinedQuantity: stock.length ? stock[0].quarantinedQuantity : 0,
+      ...totals,
+      quality: qualityTotals(qualityRows),
       recentMovements
     }
   });
 }));
 
 router.get('/movements/summary', asyncHandler(async (req, res) => {
-  const match = {};
-  if (req.query.from || req.query.to) {
-    match['movementLog.createdAt'] = {};
-    if (req.query.from) match['movementLog.createdAt'].$gte = new Date(req.query.from);
-    if (req.query.to) match['movementLog.createdAt'].$lte = new Date(req.query.to);
-    if (Object.values(match['movementLog.createdAt']).some(date => Number.isNaN(date.getTime()))) {
-      return res.status(400).json({ success: false, message: 'from/to must be valid dates' });
-    }
+  let match;
+  let qualityDateMatch;
+  try {
+    match = movementDateMatch(req.query.from, req.query.to);
+    qualityDateMatch = movementDateMatch(req.query.from, req.query.to, 'lines.inspectedAt');
+  } catch (error) {
+    return res.status(400).json({ success: false, message: error.message });
   }
   const data = await Pallet.aggregate([
     { $unwind: '$movementLog' },
-    ...(Object.keys(match).length ? [{ $match: match }] : []),
-    { $group: { _id: '$movementLog.type', count: { $sum: 1 }, quantity: { $sum: '$movementLog.quantity' } } },
-    { $sort: { _id: 1 } }
+    ...(match ? [{ $match: match }] : []),
+    { $group: { _id: { type: '$movementLog.type', referenceType: '$movementLog.referenceType' }, count: { $sum: 1 }, quantity: { $sum: '$movementLog.quantity' } } },
+    { $sort: { '_id.type': 1, '_id.referenceType': 1 } }
   ]);
-  res.json({ success: true, data });
+  const qualityRows = await GoodsReceipt.aggregate([
+    { $unwind: '$lines' },
+    ...(qualityDateMatch ? [{ $match: qualityDateMatch }] : []),
+    { $group: { _id: null, rejected: { $sum: '$lines.rejectedQuantity' }, damaged: { $sum: '$lines.damagedQuantity' }, incorrect: { $sum: '$lines.incorrectQuantity' } } }
+  ]);
+  const groups = data.map(row => ({ type: row._id.type, referenceType: row._id.referenceType, count: row.count, quantity: row.quantity }));
+  const compatibleData = data.map(row => ({ ...row, _id: row._id.type, referenceType: row._id.referenceType }));
+  res.json({ success: true, data: compatibleData, totals: movementTotals(groups), quality: qualityTotals(qualityRows) });
 }));
 
 module.exports = router;

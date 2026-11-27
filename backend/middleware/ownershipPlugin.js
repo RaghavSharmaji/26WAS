@@ -1,12 +1,19 @@
 const { getAuthContext } = require('./requestContext');
+const { isSuperAdminRole } = require('./roleCompatibility');
 
 function tenantFilter(principal, warehouseField) {
-  if (!principal || principal.role === 'superadmin') return {};
+  if (!principal || isSuperAdminRole(principal.role)) return {};
   const filter = principal.companyId
     ? { companyId: principal.companyId }
-    : { ownerId: principal.legacyOwnerId || principal.id };
+    // Legacy compatibility includes only un-migrated rows. A user without an
+    // active membership must not regain access to rows already assigned to a company.
+    : { ownerId: principal.legacyOwnerId || principal.id, companyId: null };
   if (principal.companyId && warehouseField) {
-    if (principal.warehouseScoped) filter[warehouseField] = { $in: principal.allowedWarehouseIds || [] };
+    if (principal.warehouseScoped) {
+      // Warehouse records use `_id` as their tenantWarehouseField. Scope the
+      // list itself to assigned warehouses just like warehouse-owned records.
+      filter[warehouseField] = { $in: principal.allowedWarehouseIds || [] };
+    }
     if (principal.activeWarehouseId && warehouseField !== '_id') {
       filter[warehouseField] = principal.warehouseScoped
         ? { $in: (principal.allowedWarehouseIds || []).filter(id => String(id) === String(principal.activeWarehouseId)) }
@@ -17,7 +24,7 @@ function tenantFilter(principal, warehouseField) {
 }
 
 function assignTenantFields(document, principal, { isNew = true, schema } = {}) {
-  if (!principal || principal.role === 'superadmin') return document;
+  if (!principal || isSuperAdminRole(principal.role)) return document;
   const hasPath = name => schema && schema.path(name);
   const set = (name, value) => (typeof document.set === 'function' ? document.set(name, value) : (document[name] = value));
   const get = name => (typeof document.get === 'function' ? document.get(name) : document[name]);
@@ -52,22 +59,22 @@ function assignTenantFields(document, principal, { isNew = true, schema } = {}) 
 
 function scopeQuery(next) {
   const principal = getAuthContext();
-  if (principal && principal.role !== 'superadmin'
+  if (principal && !isSuperAdminRole(principal.role)
     && ['replaceOne', 'findOneAndReplace'].includes(this.op)) {
     return next(Object.assign(new Error('Replacement writes are not enabled for tenant-scoped records'), { status: 403 }));
   }
-  if (principal && principal.role !== 'superadmin' && this.getOptions && this.getOptions().upsert) {
+  if (principal && !isSuperAdminRole(principal.role) && this.getOptions && this.getOptions().upsert) {
     return next(Object.assign(new Error('Upsert is not enabled for tenant-scoped records'), { status: 403 }));
   }
-  if (principal && principal.role !== 'superadmin') {
+  if (principal && !isSuperAdminRole(principal.role)) {
     const warehouseField = this.model.schema.options.tenantWarehouseField;
     this.where(tenantFilter(principal, warehouseField));
   }
   const update = this.getUpdate && this.getUpdate();
-  if (principal && principal.role !== 'superadmin' && Array.isArray(update)) {
+  if (principal && !isSuperAdminRole(principal.role) && Array.isArray(update)) {
     return next(Object.assign(new Error('Update pipelines are not enabled for tenant-scoped records'), { status: 400 }));
   }
-  if (principal && principal.role !== 'superadmin' && update) {
+  if (principal && !isSuperAdminRole(principal.role) && update) {
     if (!Object.keys(update).some(key => key.startsWith('$'))) {
       this.setUpdate({ $set: update });
     }
@@ -136,7 +143,7 @@ function ownershipPlugin(schema) {
 
   schema.pre('insertMany', function assignInsertManyOwners(next, documents) {
     const principal = getAuthContext();
-    if (principal && principal.role !== 'superadmin') {
+    if (principal && !isSuperAdminRole(principal.role)) {
       try {
         documents.forEach(document => assignTenantFields(document, principal, { isNew: true, schema: this.schema }));
       } catch (error) {
@@ -148,7 +155,7 @@ function ownershipPlugin(schema) {
 
   schema.pre('aggregate', function scopeAggregate(next) {
     const principal = getAuthContext();
-    if (principal && principal.role !== 'superadmin') {
+    if (principal && !isSuperAdminRole(principal.role)) {
       const firstStage = this.pipeline()[0];
       const insertAt = firstStage && (firstStage.$geoNear || firstStage.$search || firstStage.$vectorSearch) ? 1 : 0;
       const warehouseField = this._model.schema.options.tenantWarehouseField;

@@ -14,7 +14,11 @@ module.exports = (err, req, res, next) => {
     return res.status(409).json({ success: false, message: 'A record with that unique value already exists' });
   }
   if (err.status) {
-    return res.status(err.status).json({ success: false, message: err.message });
+    return res.status(err.status).json({
+      success: false,
+      ...(err.code ? { code: err.code } : {}),
+      message: err.message
+    });
   }
 
   console.error(err.message);

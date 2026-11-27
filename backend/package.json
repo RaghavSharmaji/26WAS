@@ -11,8 +11,10 @@
     "dev": "nodemon server.js",
     "seed:admin": "node scripts/createAdmin.js",
     "superadmin:reset-password": "node scripts/resetSuperAdminPassword.js",
-    "ownership:migrate": "node scripts/migrateOwnership.js",
+    "ownership:migrate:disabled": "node scripts/migrateOwnership.js",
     "companies:migrate": "node scripts/migrateCompanies.js",
+    "migration:freeze:inspect": "node scripts/recoverMigrationWriteFreeze.js",
+    "migration:freeze:recover": "node scripts/recoverMigrationWriteFreeze.js",
     "test": "jest --runInBand"
   },
   "author": "",

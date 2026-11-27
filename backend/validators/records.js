@@ -135,4 +135,31 @@ function inventory(body, type) {
   return data;
 }
 
-module.exports = { badRequest, requiredText, positiveNumber, item, category, supplier, warehouse, location, inventory };
+function inventoryBatchDeduction(body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) badRequest('A JSON object is required');
+  const allowed = new Set(['skuNumber', 'items', 'reason']);
+  const unexpected = Object.keys(body).find(key => !allowed.has(key));
+  if (unexpected) badRequest(`Unsupported batch deduction field: ${unexpected}`);
+  const skuNumber = requiredText(body.skuNumber, 'skuNumber', 80);
+  const reason = requiredText(body.reason, 'reason', 500);
+  if (!Array.isArray(body.items) || body.items.length < 1 || body.items.length > 100) {
+    badRequest('items must contain between 1 and 100 pallet quantities');
+  }
+  const seen = new Set();
+  const items = body.items.map((item, index) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)
+      || Object.keys(item).some(key => !['palletId', 'quantity'].includes(key))) {
+      badRequest(`items[${index}] must contain only palletId and quantity`);
+    }
+    const palletId = requiredText(String(item.palletId || ''), `items[${index}].palletId`, 24).toLowerCase();
+    if (!/^[a-f\d]{24}$/.test(palletId)) badRequest(`items[${index}].palletId must be a valid pallet ID`);
+    if (seen.has(palletId)) badRequest('A pallet may only appear once in a batch deduction');
+    seen.add(palletId);
+    const quantity = positiveNumber(item.quantity, `items[${index}].quantity`);
+    if (!Number.isInteger(quantity)) badRequest(`items[${index}].quantity must be a whole number`);
+    return { palletId, quantity };
+  });
+  return { skuNumber, reason, items };
+}
+
+module.exports = { badRequest, requiredText, positiveNumber, item, category, supplier, warehouse, location, inventory, inventoryBatchDeduction };

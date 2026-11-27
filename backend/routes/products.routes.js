@@ -7,7 +7,7 @@ const Supplier = require('../model/Supplier');
 const auth = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
 const validators = require('../validators/records');
-const { requireCompanyRole, requireTenantCompanyRole } = require('../middleware/companyAuthorization');
+const { requireCompanyPermission } = require('../middleware/permissions');
 
 const router = express.Router();
 router.use(auth);
@@ -67,14 +67,14 @@ router.get('/:id', asyncHandler(async (req, res) => {
   return res.json({ success: true, data: item });
 }));
 
-router.post('/', requireTenantCompanyRole('company_admin'), asyncHandler(async (req, res) => {
+router.post('/', requireCompanyPermission('products.create'), asyncHandler(async (req, res) => {
   const data = validators.item(req.body || {});
   await validateReferences(data);
   const item = await Item.create(data);
   return res.status(201).json({ success: true, data: item });
 }));
 
-router.put('/:id', requireTenantCompanyRole('company_admin'), asyncHandler(async (req, res) => {
+router.put('/:id', requireCompanyPermission('products.update'), asyncHandler(async (req, res) => {
   if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
     return res.status(400).json({ success: false, message: 'Invalid product ID' });
   }
@@ -89,7 +89,7 @@ router.put('/:id', requireTenantCompanyRole('company_admin'), asyncHandler(async
   return res.json({ success: true, data: item });
 }));
 
-router.delete('/:id', requireCompanyRole('company_admin'), asyncHandler(async (req, res) => {
+router.delete('/:id', requireCompanyPermission('products.delete'), asyncHandler(async (req, res) => {
   if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
     return res.status(400).json({ success: false, message: 'Invalid product ID' });
   }

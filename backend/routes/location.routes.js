@@ -164,10 +164,24 @@ router.post('/update', async (req, res) => {
         message: `location not fond (${location})`
       });
     } else {
+      const occupancyFieldsChanged = skuNumber !== undefined || size !== undefined;
+      if (occupancyFieldsChanged) {
+        return res.status(409).json({ success: false, code: 'LOCATION_OCCUPANCY_REQUIRES_MOVEMENT', message: 'Location SKU and occupied size are maintained by pallet movement operations.' });
+      }
+      if (maxSize !== undefined && (typeof maxSize !== 'number' || !Number.isFinite(maxSize) || maxSize < Number(locationFond.size || 0))) {
+        return res.status(400).json({ success: false, message: 'maxSize must be a finite number at least as large as current occupied size' });
+      }
+      if (status !== undefined && !['empty', 'occupied', 'upcoming', 'maintenance'].includes(status)) {
+        return res.status(400).json({ success: false, message: 'Invalid location status' });
+      }
+      if (status === 'empty' && (Number(locationFond.size || 0) > 0 || (locationFond.palletId || []).length > 0)) {
+        return res.status(409).json({ success: false, code: 'LOCATION_NOT_EMPTY', message: 'A location containing pallets cannot be marked empty.' });
+      }
+      if (status === 'occupied' && !(locationFond.palletId || []).length) {
+        return res.status(409).json({ success: false, code: 'LOCATION_OCCUPANCY_REQUIRES_MOVEMENT', message: 'Use pallet movement operations to occupy a location.' });
+      }
       if (department) locationFond.department = department;
-      if (skuNumber) locationFond.skuNumber = skuNumber;
-      if (size) locationFond.size = size;
-      if (maxSize) locationFond.maxSize = maxSize;
+      if (maxSize !== undefined) locationFond.maxSize = maxSize;
       if (status) locationFond.status = status;
       await locationFond.save();
       res.json({

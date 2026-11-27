@@ -7,7 +7,8 @@ const asyncHandler = require('../middleware/asyncHandler');
 const validators = require('../validators/records');
 const inventoryService = require('../services/inventoryService');
 const { requireCompanyRole } = require('../middleware/companyAuthorization');
-const { resolveWarehouse, resolveLocation } = require('../services/tenantService');
+const { requireCompanyPermission } = require('../middleware/permissions');
+const { resolveWarehouse, resolveLocation, resolvePalletLocation, movePallet } = require('../services/tenantService');
 
 const router = express.Router();
 router.use(auth);
@@ -37,35 +38,43 @@ router.post('/', asyncHandler(async (req, res) => {
     body.warehouseId = String(warehouse._id);
     await resolveLocation(req, body.location, body.warehouseId);
   }
-  const data = await inventoryService.receiveNewPallet({ ...body, userId: req.auth.id });
-  return res.status(201).json({ success: true, data });
+  const data = await inventoryService.receiveNewPallet({ ...body, requestKey: req.get('Idempotency-Key'), userId: req.auth.id });
+  return res.status(data.idempotentReplay ? 200 : 201).json({ success: true, data });
 }));
 
 router.put('/:id', asyncHandler(async (req, res) => {
+  if (req.body.status !== undefined) {
+    let permitted = false;
+    requireCompanyPermission('inventory.update')(req, res, () => { permitted = true; });
+    if (!permitted) return;
+    if (!Pallet.STATUS_VALUES.includes(req.body.status)) {
+      return res.status(400).json({ success: false, message: 'Invalid pallet status' });
+    }
+  }
   if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
     return res.status(400).json({ success: false, message: 'Invalid pallet ID' });
   }
-  const changes = {};
+  const pallet = await Pallet.findById(req.params.id).lean();
+  if (!pallet) return res.status(404).json({ success: false, message: 'Pallet not found' });
+  let requestedStatus;
   if (req.body.location !== undefined) {
     if (typeof req.body.location !== 'string') {
       return res.status(400).json({ success: false, message: 'location must be text' });
     }
     const locationName = req.body.location.trim();
-    if (locationName) {
-      const location = await Location.findOne({ fullName: locationName }).lean();
-      if (!location) return res.status(404).json({ success: false, message: 'Location not found' });
-      if (location.status === 'maintenance') return res.status(409).json({ success: false, message: 'Location is under maintenance' });
-    }
-    changes.location = locationName || undefined;
+    if (!locationName) return res.status(400).json({ success: false, message: 'location cannot be empty; move the pallet to another valid location' });
+    const destination = await resolvePalletLocation(req, pallet, locationName);
+    if (destination.status === 'maintenance') return res.status(409).json({ success: false, message: 'Location is under maintenance' });
   }
   if (req.body.status !== undefined) {
-    if (!['received', 'store', 'r/p', 'picked', 'damaged'].includes(req.body.status)) {
-      return res.status(400).json({ success: false, message: 'Invalid pallet status' });
-    }
-    changes.status = req.body.status;
+    requestedStatus = req.body.status;
   }
-  if (!Object.keys(changes).length) return res.status(400).json({ success: false, message: 'No editable fields supplied' });
-  const data = await Pallet.findByIdAndUpdate(req.params.id, changes, { new: true, runValidators: true });
+  if (req.body.location !== undefined) {
+    const moved = await movePallet(req, req.params.id, req.body.location.trim(), { status: requestedStatus });
+    return res.json({ success: true, data: moved.pallet });
+  }
+  if (!requestedStatus) return res.status(400).json({ success: false, message: 'No editable fields supplied' });
+  const data = await Pallet.findByIdAndUpdate(req.params.id, { status: requestedStatus }, { new: true, runValidators: true });
   if (!data) return res.status(404).json({ success: false, message: 'Pallet not found' });
   return res.json({ success: true, data });
 }));

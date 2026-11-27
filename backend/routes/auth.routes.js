@@ -8,6 +8,7 @@ const User = require('../model/User');
 const auth = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
 const AuditLog = require('../model/AuditLog');
+const { normalizeRole } = require('../middleware/roleCompatibility');
 
 const router = express.Router();
 
@@ -18,7 +19,7 @@ function publicUser(user) {
     email: user.email,
     avatar: user.avatar,
     clearance: user.clearance,
-    role: user.role || 'staff',
+    role: normalizeRole(user.role || 'staff'),
     phone: user.phone || '',
     accountStatus: user.accountStatus || 'active',
     registeredAt: user.date,
