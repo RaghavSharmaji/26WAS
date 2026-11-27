@@ -2,13 +2,13 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   LayoutDashboard, Users, Package, Boxes, ShoppingCart, Warehouse, Truck,
   BarChart3, Activity, Settings, LogOut, Search, ChevronLeft, ChevronRight,
-  Eye, Pencil, UserPlus, ShieldCheck, RefreshCw, X, KeyRound, UserCheck, UserX, Trash2
+  Eye, Pencil, UserPlus, ShieldCheck, RefreshCw, X, KeyRound, UserCheck, UserX, Trash2, Building2
 } from 'lucide-react';
 import api, { getApiError } from '../api';
 import './SuperAdminDashboard.css';
 
 const navItems = [
-  ['overview', 'Overview', LayoutDashboard], ['users', 'All Users', Users],
+  ['overview', 'Overview', LayoutDashboard], ['companies', 'Companies', Building2], ['users', 'All Users', Users],
   ['products', 'Products Monitoring', Package], ['inventory', 'Inventory Monitoring', Boxes],
   ['orders', 'Orders Monitoring', ShoppingCart], ['warehouses', 'Warehouses', Warehouse],
   ['suppliers', 'Suppliers', Truck], ['reports', 'Global Reports', BarChart3],
@@ -77,6 +77,112 @@ function Overview({ onOpenUsers }) {
     <section className="sa-panel"><div className="sa-panel-heading"><div><h3>Inventory distribution</h3><p>Available units grouped by department</p></div></div>
       {overview?.inventoryDistribution?.length ? <div className="sa-distribution">{overview.inventoryDistribution.slice(0, 10).map((row) => { const total = Math.max(1, ...overview.inventoryDistribution.map((item) => item.units)); return <div className="sa-distribution-row" key={row.department}><div><span>{row.department}</span><strong>{Number(row.units).toLocaleString('en-IN')} units · {row.users} users</strong></div><div className="sa-track"><span style={{ width: `${Math.max(2, (row.units / total) * 100)}%` }} /></div></div>; })}</div> : <div className="sa-empty">No inventory records yet.</div>}
     </section>
+  </div>;
+}
+
+function CompanyManagement() {
+  const [companies, setCompanies] = useState([]);
+  const [pagination, setPagination] = useState({ page: 1, pages: 1, total: 0 });
+  const [page, setPage] = useState(1);
+  const [search, setSearch] = useState('');
+  const [status, setStatus] = useState('all');
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [selectedCompany, setSelectedCompany] = useState(null);
+  const [reason, setReason] = useState('');
+  const [reviewStatus, setReviewStatus] = useState('all');
+  const [application, setApplication] = useState(null);
+  const [loadingApplication, setLoadingApplication] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const { data } = await api.get('/admin/companies', { params: { page, limit: 25, search, status, reviewStatus } });
+      setCompanies(data.data || []);
+      setPagination(data.pagination || { page, pages: 1, total: 0 });
+    } catch (requestError) {
+      setError(getApiError(requestError));
+    } finally {
+      setLoading(false);
+    }
+  }, [page, search, status, reviewStatus]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const activate = async (event) => {
+    event.preventDefault();
+    if (!selectedCompany) return;
+    setSaving(true);
+    setError('');
+    setNotice('');
+    try {
+      const { data } = await api.post(`/admin/companies/${selectedCompany.id}/activate`, { reason });
+      setNotice(data.message || `${selectedCompany.name} was activated.`);
+      setSelectedCompany(null);
+      setReason('');
+      await load();
+    } catch (requestError) {
+      setError(getApiError(requestError));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const openApplication = async (company) => {
+    setError(''); setNotice(''); setReason(''); setApplication(null); setSelectedCompany(company); setLoadingApplication(true);
+    try {
+      const { data } = await api.get(`/admin/companies/${company.id}/registration`);
+      setApplication(data.data);
+    } catch (requestError) { setApplication(null); setError(getApiError(requestError)); }
+    finally { setLoadingApplication(false); }
+  };
+
+  const reviewApplication = async (statusValue) => {
+    if (!selectedCompany || !reason.trim()) return;
+    setSaving(true); setError(''); setNotice('');
+    try {
+      const { data } = await api.post(`/admin/companies/${selectedCompany.id}/registration/review`, { status: statusValue, reason });
+      setNotice(data.message || `Application marked ${statusValue}.`);
+      setSelectedCompany(null); setApplication(null); setReason(''); await load();
+    } catch (requestError) { setError(getApiError(requestError)); }
+    finally { setSaving(false); }
+  };
+
+  return <div className="sa-content">
+    <div className="sa-heading"><div><p className="sa-eyebrow">TENANT ADMINISTRATION</p><h1>Companies</h1><p>{pagination.total} companies · Activate pending tenants after review.</p></div><button className="sa-secondary" type="button" onClick={load} disabled={loading}><RefreshCw size={16} /> Refresh</button></div>
+    {error && <div className="sa-error" role="alert">{error}</div>}
+    {notice && <div className="sa-notice" role="status">{notice}</div>}
+    <section className="sa-panel">
+      <div className="sa-toolbar"><label className="sa-search"><Search size={17} /><input value={search} onChange={(event) => { setPage(1); setSearch(event.target.value); }} placeholder="Search company name, code, or email" /></label>
+        <select value={status} onChange={(event) => { setPage(1); setStatus(event.target.value); }} aria-label="Filter companies by status"><option value="all">All company statuses</option><option value="pending">Pending</option><option value="active">Active</option><option value="suspended">Suspended</option><option value="deactivated">Deactivated</option></select>
+        <select value={reviewStatus} onChange={(event) => { setPage(1); setReviewStatus(event.target.value); }} aria-label="Filter application review status"><option value="all">All application statuses</option><option value="pending">Application pending</option><option value="under_review">Under review</option><option value="verified">Verified</option><option value="rejected">Rejected</option></select>
+      </div>
+      <div className="sa-table-wrap"><table className="sa-table"><thead><tr><th>Company</th><th>Company code</th><th>Contact</th><th>Status</th><th>Application</th><th>Created</th><th>Actions</th></tr></thead><tbody>
+        {companies.map((company) => <tr key={company.id}><td><strong>{company.name}</strong>{company.legalBusinessName && <small className="sa-company-detail">{company.legalBusinessName}</small>}<small className="sa-company-detail">ID: {company.id}</small></td><td>{company.slug}</td><td>{company.email || '—'}{company.phone && <small className="sa-company-detail">{company.phone}</small>}</td><td><span className={`sa-status ${company.status}`}>{company.status}</span></td><td>{company.registration ? <><span className={`sa-status ${company.registration.status}`}>{company.registration.status}</span><small className="sa-company-detail">{company.registration.reference}</small></> : 'Legacy company'}</td><td>{dateText(company.createdAt)}</td><td>{company.registration ? <button type="button" className="sa-primary" onClick={() => openApplication(company)}><UserCheck size={15} /> Review application</button> : company.status === 'pending' ? <button type="button" className="sa-primary" onClick={() => { setSelectedCompany(company); setApplication(null); setReason(''); setError(''); }}><UserCheck size={15} /> Review &amp; activate</button> : <span className="sa-muted">No action</span>}</td></tr>)}
+        {!loading && !companies.length && <tr><td colSpan="7" className="sa-empty">No companies match these filters.</td></tr>}
+        {loading && <tr><td colSpan="7" className="sa-empty">Loading companies…</td></tr>}
+      </tbody></table></div>
+      <div className="sa-pagination"><span>Page {pagination.page || page} of {Math.max(1, pagination.pages || 1)}</span><div><button type="button" aria-label="Previous page" disabled={page <= 1 || loading} onClick={() => setPage(page - 1)}><ChevronLeft size={17} /></button><button type="button" aria-label="Next page" disabled={page >= (pagination.pages || 1) || loading} onClick={() => setPage(page + 1)}><ChevronRight size={17} /></button></div></div>
+    </section>
+    {selectedCompany && <div className="sa-overlay" onClick={() => !saving && (setSelectedCompany(null), setApplication(null))}><form className="sa-modal" onClick={(event) => event.stopPropagation()} onSubmit={application ? (event) => { event.preventDefault(); reviewApplication('under_review'); } : selectedCompany.registration ? (event) => event.preventDefault() : activate}>
+      <div className="sa-modal-heading"><div><h2>{application ? 'Review company application' : 'Activate company?'}</h2><p>{application ? 'Review the submitted details. Verification and activation are separate audited steps.' : 'Activation lets this company’s existing active Company Admin select its workspace.'}</p></div><button type="button" aria-label="Close" disabled={saving} onClick={() => { setSelectedCompany(null); setApplication(null); }}><X size={19} /></button></div>
+      {selectedCompany.registration && !application && <><p>{loadingApplication ? 'Loading application details…' : 'Could not load the private application details.'}</p>{error && <div className="sa-error" role="alert">{error}</div>}<div className="sa-modal-actions"><button type="button" className="sa-secondary" onClick={() => { setSelectedCompany(null); setError(''); }}>Close</button></div></>}
+      {application && <>
+        <div className="sa-company-review"><strong>Application {application.registration.reference}</strong><span>Review status: <b>{application.registration.status}</b> · Email verification: {application.registration.emailVerificationStatus}</span><span>Administrator: {application.registration.administrator?.name} · {application.registration.administrator?.designation}</span><span>{application.registration.administrator?.email} · {application.registration.administrator?.phone}</span><span>Business: {application.registration.businessType} · {application.registration.company?.industry || selectedCompany.industry}</span><span>Location: {application.registration.city}, {application.registration.state}, {application.registration.country} · {application.registration.postalCode}</span><span>Warehouse estimate: {application.registration.warehouseRequirements?.expectedWarehouses} warehouses, {application.registration.warehouseRequirements?.approximateSkus} SKUs, {application.registration.warehouseRequirements?.monthlyOrders} monthly orders, {application.registration.warehouseRequirements?.employees} employees</span><span>Optional identifiers: GSTIN {application.registration.gstin || '—'} · PAN {application.registration.pan || '—'} · CIN/LLPIN {application.registration.cin || '—'} · Registration no. {application.registration.businessRegistrationNumber || '—'}</span><span>Terms {application.registration.acceptance?.termsVersion} / Privacy {application.registration.acceptance?.privacyVersion} accepted {dateText(application.registration.acceptance?.acceptedAt)}</span></div>
+        <label>Review reason<textarea required maxLength={500} rows={3} value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Record what was reviewed or what needs follow-up" /></label>
+        {error && <div className="sa-error" role="alert">{error}</div>}
+        <div className="sa-modal-actions"><button type="button" className="sa-secondary" disabled={saving} onClick={() => { setSelectedCompany(null); setApplication(null); }}>Close</button><button type="button" className="sa-secondary" disabled={saving || !reason.trim() || !['pending', 'under_review'].includes(application.registration.status)} onClick={() => reviewApplication('rejected')}>Reject</button><button type="button" className="sa-secondary" disabled={saving || !reason.trim() || application.registration.status !== 'pending'} onClick={() => reviewApplication('under_review')}>Mark under review</button><button type="button" className="sa-primary" disabled={saving || !reason.trim() || !['pending', 'under_review'].includes(application.registration.status)} onClick={() => reviewApplication('verified')}>Verify information</button><button type="button" className="sa-primary" disabled={saving || !reason.trim() || application.registration.status !== 'verified'} onClick={() => { setSelectedCompany(selectedCompany); setApplication(null); }}>Continue to activation</button></div>
+      </>}
+      {!application && !selectedCompany.registration && <>
+      <div className="sa-company-review"><strong>{selectedCompany.name}</strong><span>{selectedCompany.legalBusinessName || selectedCompany.slug}</span><span>{selectedCompany.email || 'No company email on file'}</span><span>Current status: <b>{selectedCompany.status}</b></span></div>
+      <label>Activation reason<textarea required maxLength={500} rows={4} value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Record why this company is being activated" /></label>
+      {error && <div className="sa-error" role="alert">{error}</div>}
+      <div className="sa-modal-actions"><button type="button" className="sa-secondary" disabled={saving} onClick={() => setSelectedCompany(null)}>Cancel</button><button type="submit" className="sa-primary" disabled={saving || !reason.trim()}>{saving ? 'Activating…' : 'Confirm activation'}</button></div>
+      </>}
+    </form></div>}
   </div>;
 }
 
@@ -177,7 +283,7 @@ function UserDetails({ user: initialUser, onBack, onViewDashboard }) {
   };
 
   return <div className="sa-content">
-    <div className="sa-heading"><div><button className="sa-back-link" onClick={onBack}><ChevronLeft size={17} /> All users</button><p className="sa-eyebrow">USER MANAGEMENT</p><h1>{user.name}</h1><p>{user.email} · <span className={`sa-status ${user.accountStatus}`}>{user.accountStatus}</span></p></div><div className="sa-heading-actions">{user.accountStatus !== 'deleted' && <button className="sa-secondary" onClick={() => setResetOpen(true)}><KeyRound size={16} /> Reset password</button>}<button className="sa-primary" onClick={() => onViewDashboard(user)}><Eye size={16} /> View User Dashboard</button></div></div>
+    <div className="sa-heading"><div><button className="sa-back-link" onClick={onBack}><ChevronLeft size={17} /> All users</button><p className="sa-eyebrow">USER MANAGEMENT</p><h1>{user.name}</h1><p>{user.email} · <span className={`sa-status ${user.accountStatus}`}>{user.accountStatus}</span></p><p className="sa-muted">Summary covers {user.companies?.length ? `${user.companies.length} active compan${user.companies.length === 1 ? 'y' : 'ies'}: ${user.companies.map(company => company.name).join(', ')}` : 'legacy records owned by this user only'}.</p></div><div className="sa-heading-actions">{user.accountStatus !== 'deleted' && <button className="sa-secondary" onClick={() => setResetOpen(true)}><KeyRound size={16} /> Reset password</button>}<button className="sa-primary" onClick={() => onViewDashboard(user)}><Eye size={16} /> View User Dashboard</button></div></div>
     {error && <div className="sa-error" role="alert">{error}</div>}
     <div className="sa-user-tabs">{userTabs.map((item) => <button key={item} className={tab === item ? 'active' : ''} onClick={() => setTab(item)}>{item}</button>)}</div>
     {tab === 'Overview' ? <div className="sa-user-overview">
@@ -214,7 +320,7 @@ function UserDashboardPreview({ user, onReturn }) {
   const [error, setError] = useState('');
   useEffect(() => { api.get(`/admin/users/${user.id}/dashboard`).then(({ data }) => setPreview(data.data)).catch((requestError) => setError(getApiError(requestError))); }, [user.id]);
   return <div className="sa-content">
-    <div className="sa-readonly-banner"><ShieldCheck size={19} /><div><strong>Read-only Super Admin view</strong><span>You are viewing {user.name}'s warehouse dashboard. No account switching or data edits are enabled here.</span></div><button onClick={onReturn}>Return to user details</button></div>
+    <div className="sa-readonly-banner"><ShieldCheck size={19} /><div><strong>Read-only Super Admin view</strong><span>You are viewing {user.name}'s warehouse summary across {(preview?.companies || []).map(company => company.name).join(', ') || 'legacy records owned by this user'}. No account switching or data edits are enabled here.</span></div><button onClick={onReturn}>Return to user details</button></div>
     <div className="sa-heading"><div><p className="sa-eyebrow">VIEWING USER ACCOUNT</p><h1>{user.name}'s Dashboard</h1><p>{user.email}</p></div></div>
     {error && <div className="sa-error" role="alert">{error}</div>}
     <div className="sa-stat-grid">{Object.entries(preview?.stats || {}).map(([key, value]) => <div className="sa-stat-card" key={key}><span className="sa-stat-label">{key.replaceAll(/([A-Z])/g, ' $1')}</span><strong>{Number(value || 0).toLocaleString('en-IN')}</strong></div>)}</div>
@@ -241,13 +347,13 @@ function MonitorSection({ resource, title }) {
   </div>;
 }
 
-function GlobalActivity({}) {
+function GlobalActivity() {
   const [events, setEvents] = useState([]); const [users, setUsers] = useState([]); const [filters, setFilters] = useState({ userId: '', type: '', from: '', to: '' }); const [error, setError] = useState('');
   useEffect(() => { api.get('/admin/users', { params: { limit: 100, status: 'all' } }).then(({ data }) => setUsers(data.data)).catch(() => {}); }, []);
   const load = useCallback(async () => { setError(''); try { const params = Object.fromEntries(Object.entries(filters).filter(([, value]) => value)); const { data } = await api.get('/admin/activity', { params }); setEvents(data.data); } catch (requestError) { setError(getApiError(requestError)); } }, [filters]);
   useEffect(() => { load(); }, [load]);
   return <div className="sa-content"><div className="sa-heading"><div><p className="sa-eyebrow">SYSTEM AUDIT</p><h1>Activity Logs</h1><p>Registrations, product additions, orders, inventory changes, sign-ins, and admin actions.</p></div><button className="sa-secondary" onClick={load}><RefreshCw size={16} /> Refresh</button></div>
-    <div className="sa-filter-row"><select value={filters.userId} onChange={(event) => setFilters({ ...filters, userId: event.target.value })}><option value="">All users</option>{users.map((user) => <option key={user.id} value={user.id}>{user.name} · {user.email}</option>)}</select><select value={filters.type} onChange={(event) => setFilters({ ...filters, type: event.target.value })}><option value="">All activity</option><option value="user.registered">Registrations</option><option value="user.login">Sign-ins</option><option value="product.created">Products</option><option value="order.created">Orders</option><option value="inventory.stock-in">Stock received</option><option value="inventory.stock-out">Stock shipped</option><option value="inventory.adjustment">Stock adjustments</option><option value="admin.action">Admin actions</option></select><label>From<input type="date" value={filters.from} onChange={(event) => setFilters({ ...filters, from: event.target.value })} /></label><label>To<input type="date" value={filters.to} onChange={(event) => setFilters({ ...filters, to: event.target.value })} /></label></div>
+    <div className="sa-filter-row"><select value={filters.userId} onChange={(event) => setFilters({ ...filters, userId: event.target.value })}><option value="">All users</option>{users.map((user) => <option key={user.id} value={user.id}>{user.name} · {user.email}</option>)}</select><select value={filters.type} onChange={(event) => setFilters({ ...filters, type: event.target.value })}><option value="">All activity</option><option value="user.registered">Registrations</option><option value="user.login">Sign-ins</option><option value="product.created">Products</option><option value="order.created">Orders</option><option value="inventory.stock-in">Manual stock-in</option><option value="inventory.receipt">Goods receipts</option><option value="inventory.quarantine">Quarantine</option><option value="inventory.putaway">Putaway</option><option value="inventory.reserve">Reservations</option><option value="inventory.pick">Picking</option><option value="inventory.release">Released stock</option><option value="inventory.dispatch">Dispatches</option><option value="inventory.stock-out">Legacy stock-out</option><option value="inventory.adjustment">Stock adjustments</option><option value="admin.action">Admin actions</option></select><label>From<input type="date" value={filters.from} onChange={(event) => setFilters({ ...filters, from: event.target.value })} /></label><label>To<input type="date" value={filters.to} onChange={(event) => setFilters({ ...filters, to: event.target.value })} /></label></div>
     {error && <div className="sa-error">{error}</div>}<ActivityList events={events} />
   </div>;
 }
@@ -264,9 +370,10 @@ function SuperAdminDashboard({ user, onLogout }) {
       {viewingUser ? <UserDashboardPreview user={viewingUser} onReturn={() => setViewingUser(null)} />
         : selectedUser ? <UserDetails key={`${selectedUser.id}-${userDetailsKey}`} user={selectedUser} onBack={() => { setSelectedUser(null); setSection('users'); }} onViewDashboard={setViewingUser} />
           : section === 'overview' ? <Overview onOpenUsers={() => setSection('users')} />
+            : section === 'companies' ? <CompanyManagement />
             : section === 'users' ? <UserManagement onSelectUser={(item) => { setSelectedUser(item); setUserDetailsKey((value) => value + 1); }} />
               : ['products', 'inventory', 'orders', 'warehouses', 'suppliers'].includes(section) ? <MonitorSection resource={section} title={sectionTitle} />
-                : section === 'reports' ? <Overview onOpenUsers={() => setSection('users')} />
+                : section === 'reports' ? <div className="sa-content"><div className="sa-heading"><div><p className="sa-eyebrow">GLOBAL REPORTING</p><h1>Global Reports</h1><p>Detailed platform-wide report exports are not available yet.</p></div></div><section className="sa-panel"><div className="sa-empty">System-wide live statistics are available on Overview. Company operational reports are available in the company Reports page to users with the required permission.</div></section></div>
                   : section === 'activity' ? <GlobalActivity />
                     : <AdminSettings user={user} />}
     </main>

@@ -1,203 +1,92 @@
-# WareFlow — Warehouse Management System
+# WareFlow WMS
 
-WareFlow contains a React/Vite frontend and a Node.js/Express/Mongoose API. The API supports normal warehouse accounts and a separately protected Super Admin console.
+WareFlow is a React and Vite frontend backed by a Node.js, Express, Mongoose, and MongoDB API. The repository contains a multi-company warehouse application with company membership, warehouse assignments, role-based permissions, inventory, procurement, receiving, outbound order processing, and a separate Super Admin console.
 
-## Development phases
+## Repository layout
 
-1. Express API, MongoDB models, JWT authentication, owner-scoped warehouse records, reports, and tests.
-2. React/Vite normal user dashboard and Super Admin administration console.
+- `backend/` — Express API, Mongoose models, middleware, services, scripts, and Jest tests.
+- `frontend/` — canonical React/Vite application. `backend/frontend/` is a legacy duplicate; use the root `frontend/` for development and builds.
+- `docs/` — local MongoDB setup, user and demo guides, architecture, test results, limitations, and readiness audit.
 
-## Technology and structure
+## Prerequisites
 
-- Node.js, Express 4, Mongoose 6.13.8, MongoDB
-- JWT bearer authentication; passwords hashed with bcrypt
-- Jest and Supertest for automated tests
+- Node.js 18 or newer (the package declares this minimum; the verification run used Node 25.7.0).
+- npm.
+- A MongoDB replica set or sharded cluster for transaction-backed workflows. A standalone MongoDB server is not enough.
+- MongoDB Community Server and `mongosh` for a local replica set. See [Local MongoDB Replica-Set Setup](docs/LOCAL_MONGODB_REPLICA_SET_SETUP.md).
 
-```text
-server.js                  Express setup, API registration, MongoDB startup, health endpoint
-routes/                    API route handlers and a shared CRUD router
-middleware/                JWT authentication, async error forwarding, central error responses
-model/                     Mongoose schemas and MongoDB relationships
-services/inventoryService.js Atomic pallet quantity changes and movement recording
-validators/records.js      Validation for products, locations, inventory, and master data
-scripts/createAdmin.js     Create or promote the first administrator
-helper/cleanItem.js        Parser for the legacy external catalog lookup
-validation/                Older reusable login/registration validators
- test/                     Jest and Supertest tests
-```
+## First-time local setup (Windows PowerShell)
 
-## Setup
-
-Requirements: Node.js 18 or newer and MongoDB (Atlas or local). Create `backend/.env` from its template only if you do not already have one, then set the database URI, JWT secret, and Super Admin credentials:
+Install dependencies in the two applications:
 
 ```powershell
+Set-Location 'C:\Users\Radhe\OneDrive\Desktop\WMS\WMS F\backend'
+npm ci
 if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 notepad .env
-npm install
+```
+
+Configure the backend-only values described in `backend/.env.example`. At minimum set `MONGODB_URI`, `SECRET_OR_KEY`, `SUPER_ADMIN_NAME`, `SUPER_ADMIN_EMAIL`, and `SUPER_ADMIN_PASSWORD`. Use a private, strong password; never copy the example value into a shared or deployed environment. The local MongoDB connection must point to a replica set for receiving, putaway, inventory transactions, and order fulfillment.
+
+Then install and configure the frontend:
+
+```powershell
+Set-Location 'C:\Users\Radhe\OneDrive\Desktop\WMS\WMS F\frontend'
+npm ci
+```
+
+`frontend/.env.example` documents the public `VITE_API_URL` setting. Its default points to `http://127.0.0.1:5000`; do not put server secrets in the frontend environment.
+
+## Start the application
+
+Start a healthy local replica set first, following the setup guide. Then use two terminals:
+
+```powershell
+# Terminal 1
+Set-Location 'C:\Users\Radhe\OneDrive\Desktop\WMS\WMS F\backend'
 npm run dev
 ```
 
-The backend requires `MONGODB_URI`, `SECRET_OR_KEY`, `SUPER_ADMIN_NAME`, `SUPER_ADMIN_EMAIL`, and a private `SUPER_ADMIN_PASSWORD` of 12–128 characters. Replace the example password before startup. The first successful connection provisions one hashed Super Admin account; later restarts do not replace its password. To intentionally update that password, change `SUPER_ADMIN_PASSWORD` in `.env` and run `npm run superadmin:reset-password` from `backend`. Keep `.env` private; it is ignored by Git.
-
-Start the frontend in a second terminal:
-
 ```powershell
-cd ..\frontend
-npm install
+# Terminal 2
+Set-Location 'C:\Users\Radhe\OneDrive\Desktop\WMS\WMS F\frontend'
 npm run dev
 ```
 
-The frontend defaults to `http://127.0.0.1:5000/api`. Set `VITE_API_URL` only if your backend is on a different host or port.
+Open the Vite URL shown in Terminal 2, normally `http://localhost:5173`. Verify the API and database connection at `http://127.0.0.1:5000/api/health` (healthy response: HTTP 200).
 
-### Existing database records
+On backend startup, the Super Admin account is provisioned from the backend environment if it does not already exist. The password is hashed and is not returned by an API. Startup does not reset an existing Super Admin password. For an intentional password update, edit the backend's local `.env` and run `npm run superadmin:reset-password` from `backend/`; sign in again afterward. Do not run any migration script as part of ordinary setup.
 
-Warehouse records created before user ownership was added do not yet belong to an account. Back up the database, set `LEGACY_DATA_OWNER_EMAIL` in `backend/.env` to the existing normal user who should own those records, and run `npm run ownership:migrate` once from `backend`. This assigns only records without an owner and updates the old global uniqueness indexes to be account-scoped. Do not run it until you have chosen the correct account; the migration cannot infer ownership from old records.
-
-To create the first administrator, set `WMS_ADMIN_NAME`, `WMS_ADMIN_EMAIL`, and a strong `WMS_ADMIN_PASSWORD` in your local `.env`, then run `npm run seed:admin`. The script creates an admin or promotes the matching existing account. It never prints the password. Public registration always creates a `staff` account; only administrators can delete master records and products/pallets where deletion is allowed.
-
-## Authentication
-
-- `POST /api/auth/register` creates a normal staff user and returns a JWT. Submitted role fields are ignored.
-- `POST /api/auth/login` returns a JWT for valid credentials. `POST /api/auth` remains as a compatibility alias.
-- Send the token as `Authorization: Bearer <token>` on protected endpoints. The older `x-auth-token` header is also accepted.
-- `GET /api/auth/user` returns the current user's public profile.
-- `POST /api/auth/logout` documents stateless logout; clients must discard their token.
-- Normal authenticated users see and update only records owned by their account. Existing `admin` accounts retain their previous normal-dashboard permissions.
-- Super Admin endpoints are under `/api/admin` and require a database-backed `superadmin` role. Normal users and legacy admins are denied.
-- The Super Admin UI includes global monitoring, account search/filter/pagination, account editing/status changes, soft deletion, temporary password resets, per-user data tabs, and a read-only user-dashboard preview.
-- User deletion is soft deletion: records are preserved, and the account cannot sign in. Admin actions and sign-ins are recorded in `audit_logs`.
-- Password-reset users must update their temporary password before the normal dashboard is shown.
-- Password hashes are excluded from responses and normal user queries.
-
-PowerShell login example:
+## Checks
 
 ```powershell
-$login = Invoke-RestMethod -Uri 'http://127.0.0.1:5000/api/auth/login' `
-  -Method Post -ContentType 'application/json' `
-  -Body (@{ email = 'admin@example.com'; password = 'your-local-password' } | ConvertTo-Json)
-$headers = @{ Authorization = "Bearer $($login.token)" }
+Set-Location 'C:\Users\Radhe\OneDrive\Desktop\WMS\WMS F\backend'
+npm test -- --runInBand
+Set-Location '..\frontend'
+npm run lint
+npm run build
 ```
 
-## API endpoints
+Replica-set integration tests are opt-in and write only to the dedicated databases guarded by each suite. Follow the setup guide and confirm the disposable local database target before setting `WAREFLOW_M3_TEST_URI` or `WAREFLOW_TICKET_TEST_URI`. Ordinary Jest results do not establish live transaction behavior for procurement or modern outbound flows.
 
-All endpoints below use JSON. Resource read/create/update routes require a bearer token unless noted.
+## Product walkthrough
 
-| Method | Path | Purpose |
-|---|---|---|
-| GET | `/api/health` | Public server/database health; `200` when connected and `503` otherwise |
-| POST | `/api/auth/register` | Public staff registration |
-| POST | `/api/auth/login` | Public login; `/api/auth` is a compatibility alias |
-| GET | `/api/auth/user` | Current authenticated user |
-| POST | `/api/auth/logout` | Stateless logout acknowledgement |
-| GET, POST | `/api/products` | Search/list products (catalog items) or create one |
-| GET, PUT, DELETE | `/api/products/:id` | Retrieve, update, or admin-delete a product |
-| GET | `/api/products/sku/:skuNumber` | Retrieve by SKU |
-| GET, POST | `/api/categories` | List or create categories |
-| GET, PUT, DELETE | `/api/categories/:id` | Retrieve/update; admin delete only if unused |
-| GET, POST | `/api/suppliers` | List or create suppliers |
-| GET, PUT, DELETE | `/api/suppliers/:id` | Retrieve/update; admin delete only if unused |
-| GET, POST | `/api/warehouses` | List or create warehouses |
-| GET, PUT, DELETE | `/api/warehouses/:id` | Retrieve/update; admin delete only if no locations refer to it |
-| GET, POST | `/api/locations` | List or create locations |
-| GET, PUT, DELETE | `/api/locations/:id` | Retrieve/update; admin delete only if no pallet uses it |
-| GET, POST | `/api/pallets` | List pallets or create one with an initial stock-in movement |
-| GET, PUT, DELETE | `/api/pallets/:id` | Retrieve/update pallet metadata; admin delete only if safe |
-| GET | `/api/inventory` | Available quantity grouped by SKU |
-| POST | `/api/inventory/stock-in` | Add stock to a pallet or create a received pallet |
-| POST | `/api/inventory/stock-out` | Remove available stock from one pallet |
-| POST | `/api/inventory/adjust` | Set a pallet's counted available quantity |
-| GET | `/api/inventory/movements` | Read the stock movement ledger; optional `skuNumber` and `limit` filters |
-| GET | `/api/reports/low-stock` | Products with a positive reorder level at or below available stock |
-| GET | `/api/reports/summary` | Product/warehouse/location counts, inventory totals, movement totals, recent movements |
-| GET | `/api/reports/movements/summary` | Stock movement counts/quantities; optional ISO `from` and `to` dates |
+- [User guide](docs/WAREFLOW_USER_GUIDE.md) explains normal and Super Admin workspaces.
+- [10–15 minute demo guide](docs/WAREFLOW_DEMO_GUIDE.md) lists prerequisites and a scripted inbound/outbound scenario.
+- [Architecture](docs/WAREFLOW_ARCHITECTURE.md) describes modules and record relationships observed in the source.
+- [Test report](docs/WAREFLOW_TEST_REPORT.md) records the actual local verification run and skipped checks.
+- [Known limitations](docs/WAREFLOW_KNOWN_LIMITATIONS.md) distinguishes deferred work and live database gaps.
+- [Evaluation readiness audit](docs/WAREFLOW_EVALUATION_READINESS_AUDIT.md) contains the original audit and a dated follow-up.
 
-Older singular routes (`/api/item`, `/api/location`, `/api/pallet`, `/api/receiving`, `/api/order`, `/api/ticket`, `/api/picker`) are retained for compatibility and require authentication. New integrations should use the consistent endpoints above. `/webs/item` is the legacy external catalog scraper and also requires authentication.
+## Security and data safety
 
-### Data fields and relationships
+Keep `backend/.env` private and out of Git. Never point a local test URI at Atlas, staging, production, or a database containing user data. Do not run the company or ownership migration commands without a reviewed backup, mapping, maintenance plan, and explicit approval. The application-level migration write freeze does not stop direct database clients or unrelated services.
 
-- **Product/catalog item:** `name`, `skuNumber` (unique), `size`, `department`; optional `description`, `ounce`, `reorderLevel`, `category` ID, and `suppliers` ID array.
-- **Category:** unique `name`, optional `description`.
-- **Supplier:** `name`, optional contact name/email/phone/address, active flag. Email is unique when supplied.
-- **Warehouse:** `name`, unique uppercase `code`, optional address and active flag.
-- **Location:** `zone`, numeric `row`, `location`, and `level`, unique `fullName`; optional `warehouse` ID and department. Status defaults to `empty`.
-- **Pallet:** item reference, SKU, `cont` (received/corrected count), `contAvailable` (currently available count), optional location/status. Stock movement records are embedded in each pallet so the count and its movement append are committed in one atomic MongoDB document update.
-- **User:** unique normalized email, bcrypt password hash, role (`staff` or `admin`), clearance, avatar, and status.
+## Company registration and onboarding
 
-## PowerShell: create and view data
+New companies apply at `/register/company`. The application creates a pending tenant, an initial Company Admin membership, a registration reference, and an audit event in one transaction. Applicants then sign in and view `/registration/status`. A Super Admin reviews the application in **Companies**, marks it under review, verifies or rejects it with a reason, and activates verified registrations with the existing audited activation action. Activation makes company selection available; it does not create warehouses, stock, or other operational records.
 
-Keep one terminal running `npm run dev`; run these examples in another PowerShell window. Adapt example names/SKUs so they are unique in your database.
+Company Admins see a setup checklist on the dashboard after selecting an active company. It links to existing warehouse, location, product, supplier, and team features. Estimates supplied on the application are planning metadata only. Registration does not verify email, GSTIN, PAN, CIN, or uploaded documents; secure document storage and verification integrations are not configured.
 
-```powershell
-# Check API and MongoDB
-Invoke-RestMethod 'http://127.0.0.1:5000/api/health'
+See [Company registration and onboarding](docs/COMPANY_REGISTRATION_AND_ONBOARDING.md), [draft Terms](docs/legal/TERMS_OF_SERVICE_DRAFT.md), and [draft Privacy Notice](docs/legal/PRIVACY_NOTICE_DRAFT.md). The legal documents are drafts and require review before commercial use.
 
-# Register a staff user, then use the returned token
-$registration = Invoke-RestMethod -Uri 'http://127.0.0.1:5000/api/auth/register' `
-  -Method Post -ContentType 'application/json' `
-  -Body (@{ name = 'Warehouse Staff'; email = 'staff@example.com'; password = 'change-this-password' } | ConvertTo-Json)
-$headers = @{ Authorization = "Bearer $($registration.token)" }
-
-# Create a category and supplier
-$category = Invoke-RestMethod -Uri 'http://127.0.0.1:5000/api/categories' `
-  -Method Post -Headers $headers -ContentType 'application/json' `
-  -Body (@{ name = 'Electronics'; description = 'Electronic goods' } | ConvertTo-Json)
-$supplier = Invoke-RestMethod -Uri 'http://127.0.0.1:5000/api/suppliers' `
-  -Method Post -Headers $headers -ContentType 'application/json' `
-  -Body (@{ name = 'Example Supply'; email = 'supply@example.com'; phone = '555-0100' } | ConvertTo-Json)
-
-# Create warehouse and location
-$warehouse = Invoke-RestMethod -Uri 'http://127.0.0.1:5000/api/warehouses' `
-  -Method Post -Headers $headers -ContentType 'application/json' `
-  -Body (@{ name = 'Main Warehouse'; code = 'MAIN'; address = '1 Warehouse Road' } | ConvertTo-Json)
-$location = Invoke-RestMethod -Uri 'http://127.0.0.1:5000/api/locations' `
-  -Method Post -Headers $headers -ContentType 'application/json' `
-  -Body (@{ zone = 'A'; row = 1; location = 1; level = 1; fullName = 'A-01-01-01'; warehouse = $warehouse.data._id } | ConvertTo-Json)
-
-# Create a catalog product and associate category/supplier
-$product = Invoke-RestMethod -Uri 'http://127.0.0.1:5000/api/products' `
-  -Method Post -Headers $headers -ContentType 'application/json' `
-  -Body (@{ name = 'Laptop'; skuNumber = 'LAP-001'; size = 1; department = 'Electronics'; reorderLevel = 5; category = $category.data._id; suppliers = @($supplier.data._id) } | ConvertTo-Json)
-
-# Receive 20 units into a new pallet, then read inventory
-$received = Invoke-RestMethod -Uri 'http://127.0.0.1:5000/api/inventory/stock-in' `
-  -Method Post -Headers $headers -ContentType 'application/json' `
-  -Body (@{ skuNumber = 'LAP-001'; quantity = 20; reason = 'Initial receiving' } | ConvertTo-Json)
-$palletId = $received.data.pallet._id
-Invoke-RestMethod -Uri 'http://127.0.0.1:5000/api/inventory' -Headers $headers
-Invoke-RestMethod -Uri 'http://127.0.0.1:5000/api/products/LAP-001' -Headers $headers
-
-# Ship 3 units, adjust the counted stock to 15, and view movements/reports
-Invoke-RestMethod -Uri 'http://127.0.0.1:5000/api/inventory/stock-out' `
-  -Method Post -Headers $headers -ContentType 'application/json' `
-  -Body (@{ palletId = $palletId; quantity = 3; reason = 'Customer order' } | ConvertTo-Json)
-Invoke-RestMethod -Uri 'http://127.0.0.1:5000/api/inventory/adjust' `
-  -Method Post -Headers $headers -ContentType 'application/json' `
-  -Body (@{ palletId = $palletId; newQuantity = 15; reason = 'Cycle count correction' } | ConvertTo-Json)
-Invoke-RestMethod -Uri 'http://127.0.0.1:5000/api/inventory/movements?skuNumber=LAP-001' -Headers $headers
-Invoke-RestMethod -Uri 'http://127.0.0.1:5000/api/reports/low-stock' -Headers $headers
-Invoke-RestMethod -Uri 'http://127.0.0.1:5000/api/reports/summary' -Headers $headers
-
-# Update product by MongoDB ID; SKU remains unique
-Invoke-RestMethod -Uri "http://127.0.0.1:5000/api/products/$($product.data._id)" `
-  -Method Put -Headers $headers -ContentType 'application/json' `
-  -Body (@{ description = 'Updated product description' } | ConvertTo-Json)
-```
-
-An insufficient stock-out returns HTTP `409`; invalid data/IDs return `400`; missing records return `404`; unauthenticated requests return `401`; non-admin delete requests return `403`; duplicate SKU/email/code/name values return `409`. Delete routes reject records still referenced by stock or other records. Use an admin bearer token for allowed deletes.
-
-## Verification
-
-Run the automated suite with `npm test`. It covers authentication and response sanitization, protected routes and roles, category CRUD/conflicts, stock-out quantity checks, atomic ledger updates, concurrency retry, and input validation. API tests use mocked Mongo models; a live local MongoDB check is still needed for a particular environment.
-
-The API was also exercised against the configured local MongoDB using temporary records: registration, category/supplier/warehouse/location/product creation, duplicate SKU rejection, stock-in, stock-out, insufficient-stock rejection, adjustment, low-stock and movement reports, and health. Those uniquely tagged test records were removed afterward.
-
-## Security and known limitations
-
-- `.env` is ignored; `.env.example` contains placeholders only. Never commit local credentials.
-- New resource endpoints require JWT authentication; delete operations require an admin role. Public registration cannot assign admin privileges.
-- Stock values and the corresponding movement event are updated atomically within one pallet document using a compare-and-set retry. This works on standalone MongoDB and avoids claiming multi-document transaction support.
-- The movement ledger is embedded per pallet; very long-lived/high-volume pallets may eventually need ledger archival or a replica-set transaction design.
-- Legacy multi-document order/ticket workflows remain for compatibility and are not guaranteed all-or-nothing across a multi-pallet order. The canonical inventory stock operations are single-pallet atomic operations.
-- MongoDB access uses Mongoose 6.13.8 and the MongoDB 4.17 driver to support Atlas connection strings on current Node.js versions. Some older routes retain legacy response conventions.
-- The external scraper depends on a third-party catalog site and Puppeteer/Chromium. No category, supplier, warehouse, or inventory UI is included in this Phase 1 backend.
-- `npm install` reports 48 dependency advisories in this legacy dependency tree (4 low, 10 moderate, 28 high, 6 critical). Review and upgrade dependencies before production deployment.
