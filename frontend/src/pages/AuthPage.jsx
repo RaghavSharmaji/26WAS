@@ -3,7 +3,7 @@ import { Boxes, Eye, EyeOff, Warehouse } from 'lucide-react';
 import api, { getApiError } from '../api';
 import './AuthPage.css';
 
-function AuthPage({ onAuthenticated }) {
+function AuthPage({ onAuthenticated, onNavigateCompanyRegistration }) {
   const [mode, setMode] = useState('login');
   const [form, setForm] = useState({ name: '', email: '', password: '' });
   const [showPassword, setShowPassword] = useState(false);
@@ -65,6 +65,7 @@ function AuthPage({ onAuthenticated }) {
         <p className="auth-footer">{isSignup ? 'Already have an account?' : 'New to WareFlow?'}{' '}
           <button type="button" onClick={() => { setMode(isSignup ? 'login' : 'signup'); setError(''); }}>{isSignup ? 'Log in' : 'Create an account'}</button>
         </p>
+        {onNavigateCompanyRegistration && <p className="auth-footer">Register a business? <button type="button" onClick={onNavigateCompanyRegistration}>Apply for a company workspace</button></p>}
       </section>
     </main>
   );

@@ -9,6 +9,10 @@ const api = axios.create({
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('wms.auth.token');
   if (token) config.headers.Authorization = `Bearer ${token}`;
+  const companyId = localStorage.getItem('wms.activeCompanyId');
+  if (companyId) config.headers['X-Company-Id'] = companyId;
+  const warehouseId = localStorage.getItem('wms.activeWarehouseId');
+  if (warehouseId) config.headers['X-Warehouse-Id'] = warehouseId;
   return config;
 });
 

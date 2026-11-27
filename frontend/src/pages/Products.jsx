@@ -14,28 +14,7 @@ function mapProduct(item, stock = 0) {
   };
 }
 
-async function changeSkuStock(skuNumber, current, desired) {
-  const delta = desired - current;
-  if (!delta) return;
-  if (delta > 0) {
-    await api.post('/inventory/stock-in', { skuNumber, quantity: delta, reason: 'Product screen stock update' });
-    return;
-  }
-  const { data } = await api.get('/pallets', { params: { skuNumber } });
-  let remaining = -delta;
-  const pallets = data.data.slice().sort((a, b) => Number(b.contAvailable ?? b.cont ?? 0) - Number(a.contAvailable ?? a.cont ?? 0));
-  for (const pallet of pallets) {
-    if (remaining <= 0) break;
-    const available = Number(pallet.contAvailable ?? pallet.cont ?? 0);
-    const quantity = Math.min(available, remaining);
-    if (!quantity) continue;
-    await api.post('/inventory/stock-out', { palletId: pallet._id, quantity, reason: 'Product screen stock update' });
-    remaining -= quantity;
-  }
-  if (remaining > 0) throw new Error('Stock changed while saving. Refresh the product and try again.');
-}
-
-function Products({ user }) {
+function Products({ permissions = [] }) {
   const [products, setProducts] = useState([]);
   const [search, setSearch] = useState('');
   const [showForm, setShowForm] = useState(false);
@@ -44,6 +23,9 @@ function Products({ user }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [form, setForm] = useState({ name: '', category: 'Electronics', price: '', stock: '', reorderLevel: '0' });
+  const canCreate = permissions.includes('products.create');
+  const canUpdate = permissions.includes('products.update');
+  const canDelete = permissions.includes('products.delete');
 
   const loadProducts = useCallback(async () => {
     setLoading(true);
@@ -79,11 +61,10 @@ function Products({ user }) {
 
   const handleSubmit = async (event) => {
     event.preventDefault();
-    const desiredStock = Number(form.stock);
     const price = Number(form.price);
     const reorderLevel = Number(form.reorderLevel);
-    if (!form.name.trim() || !Number.isFinite(price) || price < 0 || !Number.isInteger(desiredStock) || desiredStock < 0 || !Number.isInteger(reorderLevel) || reorderLevel < 0) {
-      setError('Enter a product name, valid price, and whole-number stock and reorder quantities of zero or more.');
+    if (!form.name.trim() || !Number.isFinite(price) || price < 0 || !Number.isInteger(reorderLevel) || reorderLevel < 0) {
+      setError('Enter a product name, valid price, and whole-number reorder quantity of zero or more.');
       return;
     }
 
@@ -92,11 +73,9 @@ function Products({ user }) {
     try {
       if (editProduct) {
         await api.put(`/products/${editProduct.id}`, { name: form.name.trim(), department: form.category, price, reorderLevel });
-        await changeSkuStock(editProduct.skuNumber, editProduct.stock, desiredStock);
       } else {
         const skuNumber = `WMS-${Date.now().toString(36).toUpperCase()}`;
         await api.post('/products', { name: form.name.trim(), skuNumber, department: form.category, size: 0, price, reorderLevel });
-        if (desiredStock > 0) await api.post('/inventory/stock-in', { skuNumber, quantity: desiredStock, reason: 'Initial stock' });
       }
       resetForm();
       await loadProducts();
@@ -124,7 +103,7 @@ function Products({ user }) {
     <div className="products-page">
       <div className="page-heading">
         <div><h1>Products</h1><p>Manage and monitor all your warehouse products.</p></div>
-        <button className="primary-btn" onClick={() => { setError(''); setShowForm(true); }}><Plus size={18} /> Add Product</button>
+        {canCreate && <button className="primary-btn" onClick={() => { setError(''); setShowForm(true); }}><Plus size={18} /> Add Product</button>}
       </div>
 
       {error && <div className="data-error" role="alert">{error}</div>}
@@ -154,8 +133,8 @@ function Products({ user }) {
                   <td>{product.stock}</td>
                   <td><span className={`status ${status.toLowerCase().replaceAll(' ', '-')}`}>{status}</span></td>
                   <td><div className="action-buttons">
-                    <button className="edit-btn" onClick={() => openEdit(product)} title="Edit product"><Pencil size={16} /></button>
-                    {user?.role === 'admin' && <button className="delete-btn" onClick={() => deleteProduct(product.id)} title="Delete product"><Trash2 size={16} /></button>}
+                    {canUpdate && <button className="edit-btn" onClick={() => openEdit(product)} title="Edit product"><Pencil size={16} /></button>}
+                    {canDelete && <button className="delete-btn" onClick={() => deleteProduct(product.id)} title="Delete product"><Trash2 size={16} /></button>}
                   </div></td>
                 </tr>;
               })}
@@ -172,7 +151,7 @@ function Products({ user }) {
           <label>Category / Department</label><select value={form.category} onChange={(event) => setForm({ ...form, category: event.target.value })}><option>Electronics</option><option>Accessories</option><option>Furniture</option><option>Clothing</option><option>Other</option></select>
           <label>Price (₹)</label><input required type="number" min="0" step="0.01" placeholder="Enter price" value={form.price} onChange={(event) => setForm({ ...form, price: event.target.value })} />
           <label>Minimum Stock / Reorder Level</label><input required type="number" min="0" step="1" value={form.reorderLevel} onChange={(event) => setForm({ ...form, reorderLevel: event.target.value })} />
-          <label>{editProduct ? 'Available Stock' : 'Initial Stock Quantity'}</label><input required type="number" min="0" step="1" placeholder="Enter stock quantity" value={form.stock} onChange={(event) => setForm({ ...form, stock: event.target.value })} />
+          <p className="form-note">Stock quantities are changed through Inventory or Receiving so every change is recorded in the movement ledger.</p>
           <div className="modal-actions"><button type="button" className="cancel-btn" onClick={resetForm}>Cancel</button><button type="submit" className="primary-btn" disabled={saving}>{saving ? 'Saving…' : editProduct ? 'Update Product' : 'Save Product'}</button></div>
         </form>
       </div></div>}
